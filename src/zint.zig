@@ -30,7 +30,7 @@ pub fn Zint(comptime T: type) type {
                 return 0;
             }
 
-            return std.math.log2_int_ceil(T, m) + 1;
+            return @as(u7, std.math.log2_int(T, m)) + 1;
         }
 
         const PACK_BOUND = 1 + @sizeOf(T) * 1024;
@@ -148,6 +148,9 @@ pub fn Zint(comptime T: type) type {
             return n_blocks * PACK_BOUND;
         }
 
+        /// Compress the given integers into the output buffer.
+        ///
+        /// Output buffer size needs to be at least `compress_bound(input.len)`
         pub fn compress(noalias input: []const T, noalias out: []u8) usize {
             std.debug.assert(compress_bound(input.len) <= out.len);
 
@@ -223,4 +226,29 @@ test "zint pack" {
     for (0..1024) |i| {
         std.debug.assert(unpacked_d[i] == data[i]);
     }
+}
+
+test "zint compress" {
+    const T = u64;
+    const Z = Zint(T);
+
+    const len = 512312;
+    const input = try std.heap.page_allocator.alloc(T, len);
+    var prng = std.Random.DefaultPrng.init(69);
+    const rand = prng.random();
+    input[0] = rand.int(T);
+    for (1..len) |i| {
+        input[i] = input[i - 1] +% rand.int(u8);
+    }
+
+    const compress_buf = try std.heap.page_allocator.alloc(u8, Z.compress_bound(len));
+
+    const compressed_size = Z.compress(input, compress_buf);
+
+    const compressed = compress_buf[0..compressed_size];
+
+    const output = try std.heap.page_allocator.alloc(T, len);
+    try Z.decompress(compressed, output);
+
+    std.debug.assert(std.mem.eql(T, output, input));
 }
