@@ -34,7 +34,7 @@ pub fn FastLanes(comptime T: type) type {
             return comptime (1 << width) - 1;
         }
 
-        fn transpose(input: [1024]T) [1024]T {
+        pub fn transpose(input: [1024]T) [1024]T {
             var output: [1024]T = undefined;
             for (0..1024) |i| {
                 output[i] = input[transpose_idx(i)];
@@ -43,7 +43,7 @@ pub fn FastLanes(comptime T: type) type {
             return output;
         }
 
-        fn untranspose(input: [1024]T) [1024]T {
+        pub fn untranspose(input: [1024]T) [1024]T {
             var output: [1024]T = undefined;
             for (0..1024) |i| {
                 output[transpose_idx(i)] = input[i];
@@ -199,22 +199,23 @@ pub fn FastLanes(comptime T: type) type {
     };
 }
 
-// test "pack to" {
-//     var data: [1024]u64 = undefined;
-//     for (0..1024) |i| {
-//         data[i] = i;
-//     }
+test "pack to" {
+    var data: [1024]u64 = undefined;
+    for (0..1024) |i| {
+        data[i] = i;
+    }
 
-//     const FL = FastLanes(u64);
+    const FL = FastLanes(u64);
+    const Packer = FL.Packer(10);
 
-//     const packed_d = FL.pack(10, data);
+    const packed_d = Packer.pack(data);
 
-//     const unpacked_d = FL.unpack(10, packed_d);
+    const unpacked_d = Packer.unpack(packed_d);
 
-//     for (0..1024) |i| {
-//         std.debug.assert(unpacked_d[i] == data[i]);
-//     }
-// }
+    for (0..1024) |i| {
+        std.debug.assert(unpacked_d[i] == data[i]);
+    }
+}
 
 test "delta pack to" {
     const base = -213123213;
