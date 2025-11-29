@@ -10,15 +10,20 @@ const Header = packed struct(u8) {
 };
 
 pub fn Zint(comptime T: type) type {
+    switch (T) {
+        u8, u16, u32, u64 => {},
+        else => @compileError("Zint only supports u8, u16, u32 and u64"),
+    }
+
     const FL = FastLanes(T);
 
     const DELTA_BASES_N_BITS = FL.N_BITS * FL.N_LANES;
 
     return struct {
         fn needed_num_bits(data: [1024]T) u7 {
-            var m = @abs(data[0]);
+            var m = data[0];
             for (0..1024) |idx| {
-                m = @max(data[idx], @abs(m));
+                m = @max(data[idx], m);
             }
 
             if (m == 0) {
@@ -28,8 +33,10 @@ pub fn Zint(comptime T: type) type {
             return std.math.log2_int_ceil(T, m) + 1;
         }
 
+        const PACK_BOUND = 1 + @sizeOf(T) * 1024;
+
         fn pack(input: [1024]T, noalias out: []u8) usize {
-            std.debug.assert(out.len >= 1 + @sizeOf(T) * 1024);
+            std.debug.assert(out.len >= PACK_BOUND);
 
             const normal_nbits = needed_num_bits(input);
 
@@ -134,18 +141,79 @@ pub fn Zint(comptime T: type) type {
                 unreachable;
             }
         }
+
+        /// Calculate the maximum number of output bytes needed to compress `len` integers.
+        pub fn compress_bound(len: usize) usize {
+            const n_blocks = (len + 1024 - 1) / 1024;
+            return n_blocks * PACK_BOUND;
+        }
+
+        pub fn compress(noalias input: []const T, noalias out: []u8) usize {
+            std.debug.assert(compress_bound(input.len) <= out.len);
+
+            var offset: usize = 0;
+
+            const n_whole_blocks = input.len / 1024;
+            const whole_blocks: []const [1024]T = @ptrCast(input[0 .. n_whole_blocks * 1024]);
+            for (whole_blocks) |block| {
+                offset += pack(block, out[offset..]);
+            }
+
+            const remaining = input[n_whole_blocks * 1024 ..];
+            if (remaining.len > 0) {
+                var final_block: [1024]T = undefined;
+                var idx: usize = 0;
+                for (remaining) |v| {
+                    final_block[idx] = v;
+                    idx += 1;
+                }
+
+                // repeat the last element
+                const last_elem = final_block[idx - 1];
+                for (idx..1024) |i| {
+                    final_block[i] = last_elem;
+                }
+
+                offset += pack(final_block, out[offset..]);
+            }
+
+            return offset;
+        }
+
+        pub fn decompress(noalias input: []const u8, noalias out: []T) Error!void {
+            const n_whole_blocks = out.len / 1024;
+            const whole_blocks: [][1024]T = @ptrCast(out[0 .. n_whole_blocks * 1024]);
+
+            var offset: usize = 0;
+
+            for (whole_blocks) |*b| {
+                b.*, const n_read = try unpack(input[offset..]);
+                offset += n_read;
+            }
+
+            const remaining = out[n_whole_blocks * 1024 ..];
+            if (remaining.len > 0) {
+                const final_block, const n_read = try unpack(input[offset..]);
+                offset += n_read;
+                @memcpy(remaining, final_block[0..remaining.len]);
+            }
+
+            if (offset != input.len) {
+                return Error.Invalid;
+            }
+        }
     };
 }
 
 test "zint pack" {
-    var data: [1024]u64 = undefined;
+    var data: [1024]u32 = undefined;
     for (0..1024) |i| {
-        data[i] = i + 1023;
+        data[i] = @as(u32, @intCast(i)) + 1023;
     }
 
-    const Z = Zint(u64);
+    const Z = Zint(u32);
 
-    var packed_d: [1 + 1024 * @sizeOf(u64)]u8 = undefined;
+    var packed_d: [1 + 1024 * @sizeOf(u32)]u8 = undefined;
     const packed_size = Z.pack(data, &packed_d);
 
     const unpacked_d, const consumed = try Z.unpack(&packed_d);
