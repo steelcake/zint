@@ -4,13 +4,13 @@ const FastLanes = @import("fastlanes.zig").FastLanes;
 
 pub const Error = error{Invalid};
 
+const Header = packed struct(u8) {
+    is_delta: u1,
+    num_bits: u7,
+};
+
 pub fn Zint(comptime T: type) type {
     const FL = FastLanes(T);
-
-    const Header = packed struct(u8) {
-        is_delta: u1,
-        num_bits: u7,
-    };
 
     const DELTA_BASES_N_BITS = FL.N_BITS * FL.N_LANES;
 
@@ -20,17 +20,22 @@ pub fn Zint(comptime T: type) type {
             for (0..1024) |idx| {
                 m = @max(data[idx], @abs(m));
             }
-            return std.math.log2_int_ceil(T, m);
+
+            if (m == 0) {
+                return 0;
+            }
+
+            return std.math.log2_int_ceil(T, m) + 1;
         }
 
-        pub fn pack(input: [1024]T, noalias out: []u8) usize {
+        fn pack(input: [1024]T, noalias out: []u8) usize {
             std.debug.assert(out.len >= 1 + @sizeOf(T) * 1024);
 
             const normal_nbits = needed_num_bits(input);
 
             const transposed = FL.transpose(input);
             const bases: [FL.N_LANES]T = transposed[0..FL.N_LANES].*;
-            const delta = FL.delta(input, bases);
+            const delta = FL.delta(transposed, bases);
 
             const delta_nbits = needed_num_bits(delta);
 
@@ -51,7 +56,7 @@ pub fn Zint(comptime T: type) type {
                         const packed_bytes_t = [packed_data.len * @sizeOf(T)]u8;
                         const packed_bytes: packed_bytes_t = @bitCast(packed_data);
                         out[1 + bases_bytes.len .. 1 + bases_bytes.len + packed_bytes.len].* = packed_bytes;
-                        return 1 + packed_bytes.len;
+                        return 1 + bases_bytes.len + packed_bytes.len;
                     }
                 }
 
@@ -75,50 +80,79 @@ pub fn Zint(comptime T: type) type {
             }
         }
 
-        // pub fn unpack(noalias input: []const u8) Error!struct { [1024]T, usize } {
-        //     if (input.len == 0) {
-        //         return Error.Invalid;
-        //     }
-        //     const num_bits = input[0];
+        fn unpack(noalias input: []const u8) Error!struct { [1024]T, usize } {
+            if (input.len == 0) {
+                return Error.Invalid;
+            }
+            const head: Header = @bitCast(input[0]);
 
-        //     inline for (0..FL.N_BITS) |nb| {
-        //         if (nb == num_bits) {
-        //             const input_end = 1 + FL.packed_len(nb) * @sizeOf(T);
-        //             if (input.len < input_end) {
-        //                 return Error.Invalid;
-        //             }
-        //             const packed_input: [FL.packed_len(nb)]T = @bitCast(input[1..input_end]);
-        //             return .{ FL.unpack(nb, packed_input), input_end };
-        //         }
-        //     }
+            const is_delta: bool = @bitCast(head.is_delta);
 
-        //     std.debug.assert(num_bits == FL.N_BITS);
+            if (is_delta) {
+                const expected_input_len = 1 + @sizeOf(T) * FL.N_LANES + @as(usize, head.num_bits) * 1024 / 8;
+                if (input.len < expected_input_len) {
+                    return Error.Invalid;
+                }
 
-        //     const input_end = 1 + 1024 * @sizeOf(T);
-        //     if (input.len < input_end) {
-        //         return Error.Invalid;
-        //     }
-        //     return .{ @bitCast(input[1..input_end]), input_end };
-        // }
+                const bases_bytes: [@sizeOf(T) * FL.N_LANES]u8 = input[1 .. 1 + @sizeOf(T) * FL.N_LANES].*;
+                const bases: [FL.N_LANES]T = @bitCast(bases_bytes);
+                inline for (0..FL.N_BITS + 1) |nb| {
+                    if (nb == head.num_bits) {
+                        const Packer = FL.Packer(nb);
+                        const packed_b_len = Packer.PACKED_LEN * @sizeOf(T);
+                        const packed_bytes: [packed_b_len]u8 = input[1 + bases_bytes.len .. 1 + bases_bytes.len + packed_b_len].*;
+                        const packed_data: [Packer.PACKED_LEN]T = @bitCast(packed_bytes);
+
+                        const delta = Packer.unpack(packed_data);
+                        const transposed = FL.undelta(delta, bases);
+                        const data = FL.untranspose(transposed);
+
+                        return .{ data, expected_input_len };
+                    }
+                }
+
+                unreachable;
+            } else {
+                const expected_input_len = 1 + @as(usize, head.num_bits) * 1024 / 8;
+                if (input.len < expected_input_len) {
+                    return Error.Invalid;
+                }
+
+                inline for (0..FL.N_BITS + 1) |nb| {
+                    if (nb == head.num_bits) {
+                        const Packer = FL.Packer(nb);
+                        const packed_b_len = Packer.PACKED_LEN * @sizeOf(T);
+                        const packed_bytes: [packed_b_len]u8 = input[1 .. 1 + packed_b_len].*;
+                        const packed_data: [Packer.PACKED_LEN]T = @bitCast(packed_bytes);
+
+                        const data = Packer.unpack(packed_data);
+
+                        return .{ data, expected_input_len };
+                    }
+                }
+
+                unreachable;
+            }
+        }
     };
 }
 
 test "zint pack" {
     var data: [1024]u64 = undefined;
     for (0..1024) |i| {
-        data[i] = i;
+        data[i] = i + 1023;
     }
 
     const Z = Zint(u64);
 
     var packed_d: [1 + 1024 * @sizeOf(u64)]u8 = undefined;
-    _ = Z.pack(data, &packed_d);
+    const packed_size = Z.pack(data, &packed_d);
 
-    // const unpacked_d, const consumed = Z.unpack(&packed_d);
+    const unpacked_d, const consumed = try Z.unpack(&packed_d);
 
-    // std.debug.assert(consumed == packed_len);
+    std.debug.assert(consumed == packed_size);
 
-    // for (0..1024) |i| {
-    //     std.debug.assert(unpacked_d[i] == data[i]);
-    // }
+    for (0..1024) |i| {
+        std.debug.assert(unpacked_d[i] == data[i]);
+    }
 }

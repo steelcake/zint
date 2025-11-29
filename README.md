@@ -1,6 +1,6 @@
 # zint
 
-Library for delta-encoding and byte packing integers.
+Integer compression library for Zig based on FastLanes
 
 ## License
 
