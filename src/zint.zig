@@ -183,6 +183,10 @@ pub fn Zint(comptime T: type) type {
             return offset;
         }
 
+        /// Decompress `out.len` integers from the `input` into the `out` buffer.
+        ///
+        /// This function will error if the input is invalid or doesn't deserialize into exactly
+        /// `input.len` integers.
         pub fn decompress(noalias input: []const u8, noalias out: []T) Error!void {
             const n_whole_blocks = out.len / 1024;
             const whole_blocks: [][1024]T = @ptrCast(out[0 .. n_whole_blocks * 1024]);
