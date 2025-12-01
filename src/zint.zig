@@ -4,10 +4,14 @@ const FastLanes = @import("fastlanes.zig").FastLanes;
 
 pub const Error = error{Invalid};
 
-const Header = packed struct(u8) {
+const Header = packed struct(u16) {
     is_delta: u1,
     num_bits: u7,
+    is_zigzag: u1,
+    _padding: u7 = 0,
 };
+
+const HeaderSize = @sizeOf(Header);
 
 pub fn Zint(comptime T: type) type {
     const is_signed = switch (T) {
@@ -23,9 +27,16 @@ pub fn Zint(comptime T: type) type {
     const DELTA_BASES_N_BITS = FL.N_BITS * FL.N_LANES;
 
     return struct {
-        fn zigzag_encode(data: [1024]T) [1024]U {
+        fn zigzag_encode(data: [1024]T) struct { [1024]U, bool } {
             if (!is_signed) {
-                return data;
+                return .{ data, false };
+            }
+
+            for (0..1024) |i| {
+                if (data[i] < 0) {
+                    break;
+                }
+                return .{ @bitCast(data), false };
             }
 
             var out: [1024]U = undefined;
@@ -34,7 +45,7 @@ pub fn Zint(comptime T: type) type {
                 out[i] = @bitCast(std.math.shr(T, v, (FL.N_BITS - 1)) ^ std.math.shl(T, v, 1));
             }
 
-            return out;
+            return .{ out, true };
         }
 
         pub fn negate(x: U) U {
@@ -68,10 +79,10 @@ pub fn Zint(comptime T: type) type {
             return @as(u7, std.math.log2_int(U, m)) + 1;
         }
 
-        const PACK_BOUND = 1 + @sizeOf(U) * 1024;
+        const PACK_BOUND = HeaderSize + @sizeOf(U) * 1024;
 
         fn pack(input_v: [1024]T, noalias out: []u8) usize {
-            const input = zigzag_encode(input_v);
+            const input, const is_zigzag = zigzag_encode(input_v);
 
             std.debug.assert(out.len >= PACK_BOUND);
 
@@ -88,19 +99,21 @@ pub fn Zint(comptime T: type) type {
             if (delta_is_better) {
                 const bases_bytes_t = [bases.len * @sizeOf(U)]u8;
                 const bases_bytes: bases_bytes_t = @bitCast(bases);
-                out[1 .. 1 + bases_bytes.len].* = bases_bytes;
+                out[HeaderSize .. HeaderSize + bases_bytes.len].* = bases_bytes;
 
                 inline for (0..FL.N_BITS + 1) |nb| {
                     if (nb == delta_nbits) {
-                        out[0] = @bitCast(Header{
+                        out[0..2].* = @bitCast(Header{
                             .num_bits = nb,
                             .is_delta = 1,
+                            .is_zigzag = @intFromBool(is_zigzag),
                         });
+                        out[1] = @intFromBool(is_zigzag);
                         const packed_data = FL.Packer(nb).pack(delta);
                         const packed_bytes_t = [packed_data.len * @sizeOf(U)]u8;
                         const packed_bytes: packed_bytes_t = @bitCast(packed_data);
-                        out[1 + bases_bytes.len .. 1 + bases_bytes.len + packed_bytes.len].* = packed_bytes;
-                        return 1 + bases_bytes.len + packed_bytes.len;
+                        out[HeaderSize + bases_bytes.len .. HeaderSize + bases_bytes.len + packed_bytes.len].* = packed_bytes;
+                        return HeaderSize + bases_bytes.len + packed_bytes.len;
                     }
                 }
 
@@ -108,15 +121,16 @@ pub fn Zint(comptime T: type) type {
             } else {
                 inline for (0..FL.N_BITS + 1) |nb| {
                     if (nb == normal_nbits) {
-                        out[0] = @bitCast(Header{
+                        out[0..2].* = @bitCast(Header{
                             .num_bits = nb,
                             .is_delta = 0,
+                            .is_zigzag = @intFromBool(is_zigzag),
                         });
                         const packed_data = FL.Packer(nb).pack(input);
                         const packed_bytes_t = [packed_data.len * @sizeOf(U)]u8;
                         const packed_bytes: packed_bytes_t = @bitCast(packed_data);
-                        out[1 .. 1 + packed_bytes.len].* = packed_bytes;
-                        return 1 + packed_bytes.len;
+                        out[HeaderSize .. HeaderSize + packed_bytes.len].* = packed_bytes;
+                        return HeaderSize + packed_bytes.len;
                     }
                 }
 
@@ -125,39 +139,40 @@ pub fn Zint(comptime T: type) type {
         }
 
         fn unpack(noalias input: []const u8) Error!struct { [1024]T, usize } {
-            if (input.len == 0) {
+            if (input.len < HeaderSize) {
                 return Error.Invalid;
             }
-            const head: Header = @bitCast(input[0]);
+            const head: Header = @bitCast(input[0..2].*);
 
             const is_delta: bool = @bitCast(head.is_delta);
 
             if (is_delta) {
-                const expected_input_len = 1 + @sizeOf(U) * FL.N_LANES + @as(usize, head.num_bits) * 1024 / 8;
+                const expected_input_len = HeaderSize + @sizeOf(U) * FL.N_LANES + @as(usize, head.num_bits) * 1024 / 8;
                 if (input.len < expected_input_len) {
                     return Error.Invalid;
                 }
 
-                const bases_bytes: [@sizeOf(U) * FL.N_LANES]u8 = input[1 .. 1 + @sizeOf(U) * FL.N_LANES].*;
+                const bases_bytes: [@sizeOf(U) * FL.N_LANES]u8 = input[HeaderSize .. HeaderSize + @sizeOf(U) * FL.N_LANES].*;
                 const bases: [FL.N_LANES]U = @bitCast(bases_bytes);
                 inline for (0..FL.N_BITS + 1) |nb| {
                     if (nb == head.num_bits) {
                         const Packer = FL.Packer(nb);
                         const packed_b_len = Packer.PACKED_LEN * @sizeOf(U);
-                        const packed_bytes: [packed_b_len]u8 = input[1 + bases_bytes.len .. 1 + bases_bytes.len + packed_b_len].*;
+                        const packed_bytes: [packed_b_len]u8 = input[HeaderSize + bases_bytes.len .. HeaderSize + bases_bytes.len + packed_b_len].*;
                         const packed_data: [Packer.PACKED_LEN]U = @bitCast(packed_bytes);
 
                         const delta = Packer.unpack(packed_data);
                         const transposed = FL.undelta(delta, bases);
-                        const data = FL.untranspose(transposed);
+                        const d = FL.untranspose(transposed);
+                        const data = if (head.is_zigzag == 1) zigzag_decode(d) else @as([1024]T, @bitCast(d));
 
-                        return .{ zigzag_decode(data), expected_input_len };
+                        return .{ data, expected_input_len };
                     }
                 }
 
                 unreachable;
             } else {
-                const expected_input_len = 1 + @as(usize, head.num_bits) * 1024 / 8;
+                const expected_input_len = HeaderSize + @as(usize, head.num_bits) * 1024 / 8;
                 if (input.len < expected_input_len) {
                     return Error.Invalid;
                 }
@@ -166,12 +181,13 @@ pub fn Zint(comptime T: type) type {
                     if (nb == head.num_bits) {
                         const Packer = FL.Packer(nb);
                         const packed_b_len = Packer.PACKED_LEN * @sizeOf(T);
-                        const packed_bytes: [packed_b_len]u8 = input[1 .. 1 + packed_b_len].*;
+                        const packed_bytes: [packed_b_len]u8 = input[HeaderSize .. HeaderSize + packed_b_len].*;
                         const packed_data: [Packer.PACKED_LEN]U = @bitCast(packed_bytes);
 
-                        const data = Packer.unpack(packed_data);
+                        const d = Packer.unpack(packed_data);
+                        const data = if (head.is_zigzag == 1) zigzag_decode(d) else @as([1024]T, @bitCast(d));
 
-                        return .{ zigzag_decode(data), expected_input_len };
+                        return .{ data, expected_input_len };
                     }
                 }
 
