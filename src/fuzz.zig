@@ -78,6 +78,12 @@ fn Roundtrip(comptime T: type) type {
                 std.mem.eql(T, in, ctx.output[0..in.len]),
             );
         }
+
+        pub fn tst() !void {
+            var ctx = Context(T).init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx, fuzz_one, .{});
+        }
     };
 }
 
@@ -96,58 +102,63 @@ fn Garbage(comptime T: type) type {
                 Z.decompress(input[4..], output[0..num_ints]) catch return;
             }
         }
+
+        pub fn tst() !void {
+            var ctx = Context(T).init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx.input, fuzz_one, .{});
+        }
     };
 }
 
-const Ctx8 = Context(u8);
-const Ctx16 = Context(u16);
-const Ctx32 = Context(u32);
-const Ctx64 = Context(u64);
-
-test "roundtrip 8" {
-    var ctx = Ctx8.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx, Roundtrip(u8).fuzz_one, .{});
+test "roundtrip u8" {
+    try Roundtrip(u8).tst();
+}
+test "roundtrip u16" {
+    try Roundtrip(u16).tst();
+}
+test "roundtrip u32" {
+    try Roundtrip(u32).tst();
+}
+test "roundtrip u64" {
+    try Roundtrip(u64).tst();
 }
 
-test "roundtrip 16" {
-    var ctx = Ctx16.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx, Roundtrip(u16).fuzz_one, .{});
+test "garbage u8" {
+    try Garbage(u8).tst();
+}
+test "garbage u16" {
+    try Garbage(u16).tst();
+}
+test "garbage u32" {
+    try Garbage(u32).tst();
+}
+test "garbage u64" {
+    try Garbage(u64).tst();
 }
 
-test "roundtrip 32" {
-    var ctx = Ctx32.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx, Roundtrip(u32).fuzz_one, .{});
+test "roundtrip i8" {
+    try Roundtrip(i8).tst();
+}
+test "roundtrip i16" {
+    try Roundtrip(i16).tst();
+}
+test "roundtrip i32" {
+    try Roundtrip(i32).tst();
+}
+test "roundtrip i64" {
+    try Roundtrip(i64).tst();
 }
 
-test "roundtrip 64" {
-    var ctx = Ctx64.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx, Roundtrip(u64).fuzz_one, .{});
+test "garbage i8" {
+    try Garbage(i8).tst();
 }
-
-test "garbage 8" {
-    var ctx = Ctx8.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx.input, Garbage(u8).fuzz_one, .{});
+test "garbage i16" {
+    try Garbage(i16).tst();
 }
-
-test "garbage 16" {
-    var ctx = Ctx16.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx.input, Garbage(u16).fuzz_one, .{});
+test "garbage i32" {
+    try Garbage(i32).tst();
 }
-
-test "garbage 32" {
-    var ctx = Ctx32.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx.input, Garbage(u32).fuzz_one, .{});
-}
-
-test "garbage 64" {
-    var ctx = Ctx64.init();
-    defer ctx.deinit();
-    try std.testing.fuzz(ctx.input, Garbage(u64).fuzz_one, .{});
+test "garbage i64" {
+    try Garbage(i64).tst();
 }
