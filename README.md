@@ -2,6 +2,12 @@
 
 Integer compression library for Zig based on FastLanes
 
+## Features
+
+- High performance. Zint uses FastLanes internally so it implements fully vectorized delta encoding and bitpacking.
+- Safe decompress API. It is safe to decompress untrusted input.
+- Compresses each block (1024) elements inside the input dynamically. Automatically applies delta encoding if it is beneficial.
+
 ## Example usage
 
 ```zig
