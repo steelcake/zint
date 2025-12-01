@@ -2,6 +2,23 @@
 
 Integer compression library for Zig based on FastLanes
 
+## Example usage
+
+```zig
+const Z = @require("zint").Zint(T);
+
+const compress_buf = try std.heap.page_allocator.alloc(u8, Z.compress_bound(input.len));
+
+const compressed_size = Z.compress(input, compress_buf);
+
+const compressed = compress_buf[0..compressed_size];
+
+const output = try std.heap.page_allocator.alloc(T, input.len);
+try Z.decompress(compressed, output);
+
+std.debug.assert(std.mem.eql(T, output, input));
+```
+
 ## License
 
 Licensed under either of
