@@ -273,7 +273,7 @@ test "zint pack" {
 
     const Z = Zint(u32);
 
-    var packed_d: [1 + 1024 * @sizeOf(u32)]u8 = undefined;
+    var packed_d: [HeaderSize + 1024 * @sizeOf(u32)]u8 = undefined;
     const packed_size = Z.pack(data, &packed_d);
 
     const unpacked_d, const consumed = try Z.unpack(&packed_d);
