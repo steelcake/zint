@@ -1,3 +1,12 @@
+//! This file implements bit packing and delta coding.
+//!
+//! Code is a port of fastlanes Rust implementation by spiraldb:
+//! github.com/spiraldb/fastlanes
+//!
+//! It was specifically ported from commit hash 8b655cf.
+//!
+//! Same license as the original code can be found in project root `LICENSE-APACHE`
+
 const FL_ORDER = [_]usize{ 0, 4, 2, 6, 1, 5, 3, 7 };
 
 fn index(row: usize, lane: usize) usize {
@@ -76,6 +85,89 @@ pub fn FastLanes(comptime T: type) type {
             for (0..1024) |i| {
                 output[transpose_idx(i)] = input[i];
             }
+        }
+
+        pub fn dyn_bit_pack(
+            noalias input: *const [1024]T,
+            noalias output: []u8,
+            width: usize,
+        ) usize {
+            const out: []align(1) T = @ptrCast(output);
+            inline for (0..N_BITS + 1) |W| {
+                if (W == width) {
+                    const P = Packer(W);
+                    P.bit_pack(input, out[0..P.PACKED_LEN]);
+                    return P.PACKED_LEN * @sizeOf(T);
+                }
+            }
+            unreachable;
+        }
+
+        pub fn dyn_bit_unpack(
+            noalias input: []const u8,
+            noalias output: *[1024]T,
+            width: usize,
+        ) usize {
+            const in: []align(1) const T = @ptrCast(input);
+            inline for (0..N_BITS + 1) |W| {
+                if (W == width) {
+                    const P = Packer(W);
+                    P.bit_unpack(in[0..P.PACKED_LEN], output);
+                    return P.PACKED_LEN * @sizeOf(T);
+                }
+            }
+            unreachable;
+        }
+
+        pub fn dyn_for_pack(
+            noalias input: *const [1024]T,
+            reference: T,
+            noalias output: []u8,
+            width: usize,
+        ) usize {
+            const out: []align(1) T = @ptrCast(output);
+            inline for (0..N_BITS + 1) |W| {
+                if (W == width) {
+                    const P = Packer(W);
+                    P.for_pack(input, reference, out[0..P.PACKED_LEN]);
+                    return P.PACKED_LEN * @sizeOf(T);
+                }
+            }
+            unreachable;
+        }
+
+        pub fn dyn_for_unpack(
+            noalias input: []const u8,
+            reference: T,
+            noalias output: *[1024]T,
+            width: usize,
+        ) usize {
+            const in: []align(1) const T = @ptrCast(input);
+            inline for (0..N_BITS + 1) |W| {
+                if (W == width) {
+                    const P = Packer(W);
+                    P.for_unpack(in[0..P.PACKED_LEN], reference, output);
+                    return P.PACKED_LEN * @sizeOf(T);
+                }
+            }
+            unreachable;
+        }
+
+        pub fn dyn_undelta_pack(
+            noalias input: []const u8,
+            noalias base: *const [N_LANES]T,
+            noalias output: *[1024]T,
+            width: usize,
+        ) void {
+            const in: []align(1) const T = @ptrCast(input);
+            inline for (0..N_BITS + 1) |W| {
+                if (W == width) {
+                    const P = Packer(W);
+                    P.undelta_pack(in[0..P.PACKED_LEN], base, output);
+                    return P.PACKED_LEN * @sizeOf(T);
+                }
+            }
+            unreachable;
         }
 
         pub fn Packer(comptime W: comptime_int) type {
