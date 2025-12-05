@@ -176,7 +176,7 @@ pub fn FastLanes(comptime T: type) type {
             }
 
             return struct {
-                const PACKED_LEN = 1024 / W * N_BITS;
+                const PACKED_LEN = if(W == 0) 0 else 1024 / W * N_BITS;
 
                 inline fn pack(
                     ctx: anytype,
@@ -379,4 +379,66 @@ pub fn FastLanes(comptime T: type) type {
             };
         }
     };
+}
+
+pub fn needed_width(comptime T: type, noalias data: *const [1024]T) u7 {
+    var m = data[0];
+    for (0..1024) |idx| {
+        m = @max(data[idx], m);
+    }
+    return @sizeOf(T) * 8 - @clz(m);
+}
+
+fn Test(comptime T: type) type {
+    return struct {
+        const std = @import("std");
+
+        const FL = FastLanes(T);
+
+        fn read_input(input: []const u8) [1024]T {
+            const typed_input: []const align(1) T = @ptrCast(input[0..input.len / @sizeOf(T) * @sizeOf(T)]);
+
+            const inlen = @min(typed_input.len, 1024);
+
+            var in = std.mem.zeroes([1024]T);
+            @memcpy(in[0..inlen], typed_input[0..inlen]);
+
+            return in;
+        }
+
+        fn fuzz_bit_pack(_: void, input: []const u8) anyerror!void {
+            const in = read_input(input);
+            const width = needed_width(T, &in); 
+            var p: [1024 * @sizeOf(T)]u8 = undefined;
+
+            const n_bytes = FL.dyn_bit_pack(&in, &p, width);
+
+            var out: [1024]T = undefined;
+
+            const nb = FL.dyn_bit_unpack(&p, &out, width);
+
+            try std.testing.expectEqual(nb, n_bytes);
+            try std.testing.expect(std.mem.eql(T, out, in));
+        }
+
+        test "fuzz_bit_pack" {
+            try std.testing.fuzz({}, fuzz_bit_pack, .{});
+        }
+    };
+}
+
+test "u8"{
+    _ = Test(u8);
+}
+
+test "u16" {
+    _ = Test(u16);
+}
+
+test "u32" {
+    _ = Test(u32);
+}
+
+test "u64" {
+    _ = Test(u64);
 }
