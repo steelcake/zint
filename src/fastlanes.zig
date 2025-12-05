@@ -34,7 +34,7 @@ pub fn FastLanes(comptime T: type) type {
         const N_LANES = 1024 / N_BITS;
 
         fn mask(width: usize) T {
-            return (1 << width) - 1;
+            return (@as(T, 1) << @intCast(width)) - 1;
         }
 
         pub fn delta(
@@ -89,31 +89,29 @@ pub fn FastLanes(comptime T: type) type {
 
         pub fn dyn_bit_pack(
             noalias input: *const [1024]T,
-            noalias output: []u8,
+            noalias output: []T,
             width: usize,
         ) usize {
-            const out: []align(1) T = @ptrCast(output);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.bit_pack(input, out[0..P.PACKED_LEN]);
-                    return P.PACKED_LEN * @sizeOf(T);
+                    P.bit_pack(input, output[0..P.PACKED_LEN]);
+                    return P.PACKED_LEN;
                 }
             }
             unreachable;
         }
 
         pub fn dyn_bit_unpack(
-            noalias input: []const u8,
+            noalias input: []const T,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
-            const in: []align(1) const T = @ptrCast(input);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.bit_unpack(in[0..P.PACKED_LEN], output);
-                    return P.PACKED_LEN * @sizeOf(T);
+                    P.bit_unpack(input[0..P.PACKED_LEN], output);
+                    return P.PACKED_LEN;
                 }
             }
             unreachable;
@@ -122,49 +120,46 @@ pub fn FastLanes(comptime T: type) type {
         pub fn dyn_for_pack(
             noalias input: *const [1024]T,
             reference: T,
-            noalias output: []u8,
+            noalias output: []T,
             width: usize,
         ) usize {
-            const out: []align(1) T = @ptrCast(output);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.for_pack(input, reference, out[0..P.PACKED_LEN]);
-                    return P.PACKED_LEN * @sizeOf(T);
+                    P.for_pack(input, reference, output[0..P.PACKED_LEN]);
+                    return P.PACKED_LEN;
                 }
             }
             unreachable;
         }
 
         pub fn dyn_for_unpack(
-            noalias input: []const u8,
+            noalias input: []const T,
             reference: T,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
-            const in: []align(1) const T = @ptrCast(input);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.for_unpack(in[0..P.PACKED_LEN], reference, output);
-                    return P.PACKED_LEN * @sizeOf(T);
+                    P.for_unpack(input[0..P.PACKED_LEN], reference, output);
+                    return P.PACKED_LEN;
                 }
             }
             unreachable;
         }
 
         pub fn dyn_undelta_pack(
-            noalias input: []const u8,
+            noalias input: []const T,
             noalias base: *const [N_LANES]T,
             noalias output: *[1024]T,
             width: usize,
-        ) void {
-            const in: []align(1) const T = @ptrCast(input);
+        ) usize {
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.undelta_pack(in[0..P.PACKED_LEN], base, output);
-                    return P.PACKED_LEN * @sizeOf(T);
+                    P.undelta_pack(input[0..P.PACKED_LEN], base, output);
+                    return P.PACKED_LEN;
                 }
             }
             unreachable;
@@ -176,7 +171,7 @@ pub fn FastLanes(comptime T: type) type {
             }
 
             return struct {
-                const PACKED_LEN = if(W == 0) 0 else 1024 / W * N_BITS;
+                const PACKED_LEN = 1024 * W / N_BITS;
 
                 inline fn pack(
                     ctx: anytype,
@@ -193,7 +188,7 @@ pub fn FastLanes(comptime T: type) type {
                         }
                         return;
                     } else {
-                        const mask_ = mask(T, W);
+                        const mask_ = mask(W);
 
                         var tmp: T = 0;
 
@@ -270,13 +265,13 @@ pub fn FastLanes(comptime T: type) type {
                     noalias output: *[PACKED_LEN]T,
                 ) void {
                     const Kernel = struct {
-                        fn kernel(noalias in: *const [1024]T, idx: usize) T {
+                        fn kernel(in: *const [1024]T, idx: usize) T {
                             return in[idx];
                         }
                     };
 
                     for (0..N_LANES) |lane| {
-                        pack(T, W, input, Kernel.kernel, output, lane);
+                        pack(input, Kernel.kernel, output, lane);
                     }
                 }
 
@@ -285,13 +280,13 @@ pub fn FastLanes(comptime T: type) type {
                     noalias output: *[1024]T,
                 ) void {
                     const Kernel = struct {
-                        fn kernel(noalias out: *[1024]T, idx: usize, elem: T) void {
+                        fn kernel(out: *[1024]T, idx: usize, elem: T) void {
                             out[idx] = elem;
                         }
                     };
 
                     for (0..N_LANES) |lane| {
-                        unpack(T, W, output, Kernel.kernel, input, lane);
+                        unpack(output, Kernel.kernel, input, lane);
                     }
                 }
 
@@ -317,7 +312,7 @@ pub fn FastLanes(comptime T: type) type {
                     };
 
                     for (0..N_LANES) |lane| {
-                        pack(T, W, ctx, Kernel.kernel, output, lane);
+                        pack(ctx, Kernel.kernel, output, lane);
                     }
                 }
 
@@ -343,7 +338,7 @@ pub fn FastLanes(comptime T: type) type {
                     };
 
                     for (0..N_LANES) |lane| {
-                        unpack(T, W, ctx, Kernel.kernel, input, lane);
+                        unpack(ctx, Kernel.kernel, input, lane);
                     }
                 }
 
@@ -373,20 +368,12 @@ pub fn FastLanes(comptime T: type) type {
                             }
                         };
 
-                        unpack(T, W, ctx, Kernel.kernel, input, lane);
+                        unpack(ctx, Kernel.kernel, input, lane);
                     }
                 }
             };
         }
     };
-}
-
-pub fn needed_width(comptime T: type, noalias data: *const [1024]T) u7 {
-    var m = data[0];
-    for (0..1024) |idx| {
-        m = @max(data[idx], m);
-    }
-    return @sizeOf(T) * 8 - @clz(m);
 }
 
 fn Test(comptime T: type) type {
@@ -395,39 +382,118 @@ fn Test(comptime T: type) type {
 
         const FL = FastLanes(T);
 
+        fn needed_width(noalias data: *const [1024]T) u7 {
+            var m = data[0];
+            for (0..1024) |idx| {
+                m = @max(data[idx], m);
+            }
+            return @sizeOf(T) * 8 - @clz(m);
+        }
+
         fn read_input(input: []const u8) [1024]T {
-            const typed_input: []const align(1) T = @ptrCast(input[0..input.len / @sizeOf(T) * @sizeOf(T)]);
+            const typed_input: []align(1) const T = @ptrCast(input[0 .. input.len / @sizeOf(T) * @sizeOf(T)]);
 
             const inlen = @min(typed_input.len, 1024);
 
             var in = std.mem.zeroes([1024]T);
             @memcpy(in[0..inlen], typed_input[0..inlen]);
 
+            var prng = std.Random.DefaultPrng.init(if (inlen > 0) typed_input[0] else 69);
+            for (inlen..1024) |i| {
+                in[i] = @truncate(prng.next());
+            }
+
             return in;
         }
 
         fn fuzz_bit_pack(_: void, input: []const u8) anyerror!void {
             const in = read_input(input);
-            const width = needed_width(T, &in); 
-            var p: [1024 * @sizeOf(T)]u8 = undefined;
+            const width = needed_width(&in);
+            var p = std.mem.zeroes([1024]T);
+            const packed_len = FL.dyn_bit_pack(&in, &p, width);
 
-            const n_bytes = FL.dyn_bit_pack(&in, &p, width);
+            var out = std.mem.zeroes([1024]T);
 
-            var out: [1024]T = undefined;
+            const pl = FL.dyn_bit_unpack(&p, &out, width);
 
-            const nb = FL.dyn_bit_unpack(&p, &out, width);
+            try std.testing.expectEqual(pl, packed_len);
 
-            try std.testing.expectEqual(nb, n_bytes);
-            try std.testing.expect(std.mem.eql(T, out, in));
+            try std.testing.expect(std.mem.eql(T, &out, &in));
         }
 
         test "fuzz_bit_pack" {
             try std.testing.fuzz({}, fuzz_bit_pack, .{});
         }
+
+        fn fuzz_delta_pack(_: void, input: []const u8) anyerror!void {
+            const in = read_input(input);
+
+            var transposed = std.mem.zeroes([1024]T);
+            FL.transpose(&in, &transposed);
+
+            var untransposed = std.mem.zeroes([1024]T);
+            FL.untranspose(&transposed, &untransposed);
+
+            try std.testing.expect(std.mem.eql(T, &in, &untransposed));
+
+            const bases = transposed[0..FL.N_LANES];
+
+            var delta = std.mem.zeroes([1024]T);
+            FL.delta(&transposed, bases, &delta);
+
+            var undelta = std.mem.zeroes([1024]T);
+            FL.undelta(&delta, bases, &undelta);
+
+            try std.testing.expect(std.mem.eql(T, &undelta, &transposed));
+
+            const width = needed_width(&delta);
+
+            var p = std.mem.zeroes([1024]T);
+            const packed_len = FL.dyn_bit_pack(&delta, &p, width);
+
+            var unpacked = std.mem.zeroes([1024]T);
+            const pl = FL.dyn_bit_unpack(&p, &unpacked, width);
+
+            try std.testing.expectEqual(pl, packed_len);
+
+            try std.testing.expect(std.mem.eql(T, &delta, &unpacked));
+
+            var undelta_packed = std.mem.zeroes([1024]T);
+            const dpl = FL.dyn_undelta_pack(&p, bases, &undelta_packed, width);
+            try std.testing.expectEqual(dpl, packed_len);
+
+            try std.testing.expect(std.mem.eql(T, &undelta_packed, &transposed));
+        }
+
+        test "fuzz_delta_pack" {
+            try std.testing.fuzz({}, fuzz_delta_pack, .{});
+        }
+
+        fn fuzz_for_pack(_: void, input: []const u8) anyerror!void {
+            const in = read_input(input);
+
+            const min, const max = std.mem.minMax(T, &in);
+            const width = (@sizeOf(T) * 8) - @clz(max - min);
+
+            var p = std.mem.zeroes([1024]T);
+            const packed_len = FL.dyn_for_pack(&in, min, &p, width);
+
+            var out = std.mem.zeroes([1024]T);
+
+            const pl = FL.dyn_for_unpack(&p, min, &out, width);
+
+            try std.testing.expectEqual(pl, packed_len);
+
+            try std.testing.expect(std.mem.eql(T, &out, &in));
+        }
+
+        test "fuzz_for_pack" {
+            try std.testing.fuzz({}, fuzz_for_pack, .{});
+        }
     };
 }
 
-test "u8"{
+test "u8" {
     _ = Test(u8);
 }
 
