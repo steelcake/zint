@@ -390,24 +390,25 @@ fn Test(comptime T: type) type {
             return @sizeOf(T) * 8 - @clz(m);
         }
 
-        fn read_input(input: []const u8) [1024]T {
-            const typed_input: []align(1) const T = @ptrCast(input[0 .. input.len / @sizeOf(T) * @sizeOf(T)]);
+        fn read_input(input: []const u8) ?[1024]T {
+            if (input.len < 1 + @sizeOf(T) * 1024) return null;
 
-            const inlen = @min(typed_input.len, 1024);
+            const has_zeroes = input[0] % 2 == 0;
+            var in: [1024]T = @bitCast(input[1 .. 1 + @sizeOf(T) * 1024].*);
 
-            var in = std.mem.zeroes([1024]T);
-            @memcpy(in[0..inlen], typed_input[0..inlen]);
-
-            var prng = std.Random.DefaultPrng.init(if (inlen > 0) typed_input[0] else 69);
-            for (inlen..1024) |i| {
-                in[i] = @truncate(prng.next());
+            if (!has_zeroes) {
+                for (0..1024) |i| {
+                    if (in[i] == 0) {
+                        in[i] = 69;
+                    }
+                }
             }
 
             return in;
         }
 
         fn fuzz_bit_pack(_: void, input: []const u8) anyerror!void {
-            const in = read_input(input);
+            const in = read_input(input) orelse return;
             const width = needed_width(&in);
             var p = std.mem.zeroes([1024]T);
             const packed_len = FL.dyn_bit_pack(&in, &p, width);
@@ -426,7 +427,7 @@ fn Test(comptime T: type) type {
         }
 
         fn fuzz_delta_pack(_: void, input: []const u8) anyerror!void {
-            const in = read_input(input);
+            const in = read_input(input) orelse return;
 
             var transposed = std.mem.zeroes([1024]T);
             FL.transpose(&in, &transposed);
@@ -470,7 +471,7 @@ fn Test(comptime T: type) type {
         }
 
         fn fuzz_for_pack(_: void, input: []const u8) anyerror!void {
-            const in = read_input(input);
+            const in = read_input(input) orelse return;
 
             const min, const max = std.mem.minMax(T, &in);
             const width = (@sizeOf(T) * 8) - @clz(max - min);
