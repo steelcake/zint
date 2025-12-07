@@ -49,7 +49,7 @@ fn Unsigned(comptime T: type) type {
             // - packed full blocks
             //
             // We round the block count up to make sure we can comfortably write remainder data
-            // to the output buffer without worrying of going out of bounds when there the length
+            // to the output buffer without worrying of going out of bounds when the length
             // is < 1024.
             //
             // So we treat remainder data size as a full block of data size.
@@ -200,9 +200,11 @@ fn Unsigned(comptime T: type) type {
                     // there is not enough data after the remainder section
                     // we have to copy packed remainder data somewhere to create a 1024
                     // length input for unpacking
-
-                    std.debug.assert(output.len == n_remainder);
-                    std.debug.assert(data_section.len == remainder_packed_len);
+                    //
+                    // WARNING: there can be actual full blocks after remainder data
+                    // even if thre is not enough data to have a pseudo full block
+                    // with remainder data width. This is because the packed full blocks that come
+                    // after the packed remainder data might have lower bit width than the remainder data.
 
                     var block = std.mem.zeroes([1024]T);
 
@@ -213,9 +215,9 @@ fn Unsigned(comptime T: type) type {
 
                     var out = std.mem.zeroes([1024]T);
                     _ = FL.dyn_bit_unpack(block_slice, &out, remainder_width);
-                    @memcpy(output, out[0..n_remainder]);
+                    @memcpy(output[0..n_remainder], out[0..n_remainder]);
 
-                    return data_section_byte_offset + remainder_packed_len * @sizeOf(T);
+                    offset += remainder_packed_len;
                 }
             }
 
