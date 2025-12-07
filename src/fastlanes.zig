@@ -30,8 +30,8 @@ pub fn FastLanes(comptime T: type) type {
     }
 
     return struct {
-        const N_BITS = @sizeOf(T) * 8;
-        const N_LANES = 1024 / N_BITS;
+        pub const N_BITS = @sizeOf(T) * 8;
+        pub const N_LANES = 1024 / N_BITS;
 
         fn mask(width: usize) T {
             return (@as(T, 1) << @intCast(width)) - 1;
@@ -89,29 +89,31 @@ pub fn FastLanes(comptime T: type) type {
 
         pub fn dyn_bit_pack(
             noalias input: *const [1024]T,
-            noalias output: []T,
+            noalias output: []u8,
             width: usize,
         ) usize {
+            const out: []align(1) T = @ptrCast(output[0..output.len / @sizeOf(T) * @sizeOf(T)]);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.bit_pack(input, output[0..P.PACKED_LEN]);
-                    return P.PACKED_LEN;
+                    P.bit_pack(input, out[0..P.PACKED_LEN]);
+                    return P.PACKED_LEN * @sizeOf(T);
                 }
             }
             unreachable;
         }
 
         pub fn dyn_bit_unpack(
-            noalias input: []const T,
+            noalias input: []const u8,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
+            const in: []align(1) const T = @ptrCast(input[0..input.len / @sizeOf(T) * @sizeOf(T)]);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.bit_unpack(input[0..P.PACKED_LEN], output);
-                    return P.PACKED_LEN;
+                    P.bit_unpack(in[0..P.PACKED_LEN], output);
+                    return P.PACKED_LEN * @sizeOf(T);
                 }
             }
             unreachable;
@@ -120,46 +122,49 @@ pub fn FastLanes(comptime T: type) type {
         pub fn dyn_for_pack(
             noalias input: *const [1024]T,
             reference: T,
-            noalias output: []T,
+            noalias output: []u8,
             width: usize,
         ) usize {
+            const out: []align(1) T = @ptrCast(output[0..output.len / @sizeOf(T) * @sizeOf(T)]);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.for_pack(input, reference, output[0..P.PACKED_LEN]);
-                    return P.PACKED_LEN;
+                    P.for_pack(input, reference, out[0..P.PACKED_LEN]);
+                    return P.PACKED_LEN * @sizeOf(T);
                 }
             }
             unreachable;
         }
 
         pub fn dyn_for_unpack(
-            noalias input: []const T,
+            noalias input: []const u8,
             reference: T,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
+            const in: []align(1) const T = @ptrCast(input[0..input.len / @sizeOf(T) * @sizeOf(T)]);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.for_unpack(input[0..P.PACKED_LEN], reference, output);
-                    return P.PACKED_LEN;
+                    P.for_unpack(in[0..P.PACKED_LEN], reference, output);
+                    return P.PACKED_LEN * @sizeOf(T);
                 }
             }
             unreachable;
         }
 
         pub fn dyn_undelta_pack(
-            noalias input: []const T,
+            noalias input: []const u8,
             noalias base: *const [N_LANES]T,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
+            const in: []align(1) const T = @ptrCast(input[0..input.len / @sizeOf(T) * @sizeOf(T)]);
             inline for (0..N_BITS + 1) |W| {
                 if (W == width) {
                     const P = Packer(W);
-                    P.undelta_pack(input[0..P.PACKED_LEN], base, output);
-                    return P.PACKED_LEN;
+                    P.undelta_pack(in[0..P.PACKED_LEN], base, output);
+                    return P.PACKED_LEN * @sizeOf(T);
                 }
             }
             unreachable;
@@ -176,7 +181,7 @@ pub fn FastLanes(comptime T: type) type {
                 inline fn pack(
                     ctx: anytype,
                     comptime kernel: fn (@TypeOf(ctx), idx: usize) T,
-                    noalias output: *[PACKED_LEN]T,
+                    noalias output: *align(1) [PACKED_LEN]T,
                     lane: usize,
                 ) void {
                     if (W == 0) {
@@ -217,7 +222,7 @@ pub fn FastLanes(comptime T: type) type {
                 inline fn unpack(
                     ctx: anytype,
                     comptime kernel: fn (@TypeOf(ctx), idx: usize, elem: T) void,
-                    noalias input: *const [PACKED_LEN]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
                     lane: usize,
                 ) void {
                     if (W == 0) {
@@ -262,7 +267,7 @@ pub fn FastLanes(comptime T: type) type {
 
                 pub fn bit_pack(
                     noalias input: *const [1024]T,
-                    noalias output: *[PACKED_LEN]T,
+                    noalias output: *align(1) [PACKED_LEN]T,
                 ) void {
                     const Kernel = struct {
                         fn kernel(in: *const [1024]T, idx: usize) T {
@@ -276,7 +281,7 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn bit_unpack(
-                    noalias input: *const [PACKED_LEN]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
                     noalias output: *[1024]T,
                 ) void {
                     const Kernel = struct {
@@ -293,7 +298,7 @@ pub fn FastLanes(comptime T: type) type {
                 pub fn for_pack(
                     noalias input: *const [1024]T,
                     reference: T,
-                    noalias output: *[PACKED_LEN]T,
+                    noalias output: *align(1) [PACKED_LEN]T,
                 ) void {
                     const Ctx = struct {
                         ref: T,
@@ -317,7 +322,7 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn for_unpack(
-                    noalias input: *const [PACKED_LEN]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
                     reference: T,
                     noalias output: *[1024]T,
                 ) void {
@@ -343,8 +348,8 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn undelta_pack(
-                    noalias input: *const [PACKED_LEN]T,
-                    noalias base: *const [N_LANES]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
+                    noalias base: *align(1) const [N_LANES]T,
                     noalias output: *[1024]T,
                 ) void {
                     for (0..N_LANES) |lane| {
