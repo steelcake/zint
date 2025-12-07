@@ -14,7 +14,7 @@ pub fn ScalarBitpack(comptime T: type) type {
         /// Bit packs and writes integers from the input into the output.
         ///
         /// Returns the number of elements written to the output.
-        fn bitpack(input: []const T, reference: T, output: []align(1) T, bit_width: u8) Error!usize {
+        pub fn bitpack(input: []const T, reference: T, output: []align(1) T, bit_width: u8) Error!usize {
             if (bit_width > N_BITS) {
                 return Error.InvalidInput;
             }
