@@ -35,6 +35,7 @@ fn Unsigned(comptime T: type) type {
     }
 
     const FL = FastLanes(T);
+    const SPack = ScalarBitpack(T);
 
     const N_BYTES = @sizeOf(T);
     const N_BITS = N_BYTES * 8;
@@ -110,33 +111,53 @@ fn Unsigned(comptime T: type) type {
                 output[4] = width;
 
                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
-
-                if (n_whole_blocks > 0) {
-                    // There is data after the remainder so we can treat it as a full block
-                    // but then cut-off some at the end so the rest of the compression writes over the
-                    // unused part
-                    const block: *const [1024]T = input[0..1024];
-
-                    _ = FL.dyn_bit_pack(block, out, width);
-
-                    offset += remainder_packed_len;
-                } else {
-                    // there is no data after the remainder so we should copy it somewhere else
-                    // and merge with other values in order to make it a whole block
-
-                    // TODO: maybe shouldn't use stack here, can use extra output allocation or a context parameter
-                    // for extra buffer space
-                    var block = std.mem.zeroes([1024]T);
-
-                    @memcpy(block[0..n_remainder], input[0..n_remainder]);
-
-                    _ = FL.dyn_bit_pack(&block, out, width);
-
-                    return byte_offset + N_BYTES * remainder_packed_len;
-                }
+                const n_written = SPack.bitpack(
+                    input[0..n_remainder],
+                    0,
+                    out,
+                    width,
+                ) catch {
+                    @panic("failed scalar pack, this should never happen");
+                };
+                std.debug.assert(n_written == remainder_packed_len);
+                offset += remainder_packed_len;
             } else {
                 output[4] = 0;
             }
+            // if (n_remainder > 0) {
+            //     const max = std.mem.max(T, input[0..n_remainder]);
+            //     const width = needed_width(max);
+
+            //     output[4] = width;
+
+            //     const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
+
+            //     if (n_whole_blocks > 0) {
+            //         // There is data after the remainder so we can treat it as a full block
+            //         // but then cut-off some at the end so the rest of the compression writes over the
+            //         // unused part
+            //         const block: *const [1024]T = input[0..1024];
+
+            //         _ = FL.dyn_bit_pack(block, out, width);
+
+            //         offset += remainder_packed_len;
+            //     } else {
+            //         // there is no data after the remainder so we should copy it somewhere else
+            //         // and merge with other values in order to make it a whole block
+
+            //         // TODO: maybe shouldn't use stack here, can use extra output allocation or a context parameter
+            //         // for extra buffer space
+            //         var block = std.mem.zeroes([1024]T);
+
+            //         @memcpy(block[0..n_remainder], input[0..n_remainder]);
+
+            //         _ = FL.dyn_bit_pack(&block, out, width);
+
+            //         return byte_offset + N_BYTES * remainder_packed_len;
+            //     }
+            // } else {
+            //     output[4] = 0;
+            // }
 
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
@@ -204,53 +225,63 @@ fn Unsigned(comptime T: type) type {
 
             // read remainder data
             if (n_remainder > 0) {
-                // How big a block of packed data with remainder_width would be
-                const block_needed_len = @as(u64, remainder_width) * 1024 / N_BITS;
-
-                if (data_section.len >= block_needed_len) {
-                    // there is enough data after the remainder section
-                    // we can just unpack a full block with remainder_width
-                    // and then discard the unneeded part
-
-                    const block: []align(1) const T = data_section[0..block_needed_len];
-
-                    if (output.len >= 1024) {
-                        _ = FL.dyn_bit_unpack(block, output[0..1024], remainder_width);
-                    } else {
-                        var out = std.mem.zeroes([1024]T);
-                        _ = FL.dyn_bit_unpack(block, &out, remainder_width);
-                        @memcpy(output[0..n_remainder], out[0..n_remainder]);
-                    }
-
-                    offset += remainder_packed_len;
-                } else {
-                    // there is not enough data after the remainder section
-                    // we have to copy packed remainder data somewhere to create a 1024
-                    // length input for unpacking
-                    //
-                    // WARNING: there can be actual full blocks after remainder data
-                    // even if thre is not enough data to have a pseudo full block
-                    // with remainder data width. This is because the packed full blocks that come
-                    // after the packed remainder data might have lower bit width than the remainder data.
-
-                    var block = std.mem.zeroes([1024]T);
-
-                    // copy from remainder packed data
-                    @memcpy(block[0..remainder_packed_len], data_section);
-
-                    const block_slice = block[0..block_needed_len];
-
-                    if (output.len >= 1024) {
-                        _ = FL.dyn_bit_unpack(block_slice, output[0..1024], remainder_width);
-                    } else {
-                        var out = std.mem.zeroes([1024]T);
-                        _ = FL.dyn_bit_unpack(block_slice, &out, remainder_width);
-                        @memcpy(output[0..n_remainder], out[0..n_remainder]);
-                    }
-
-                    offset += remainder_packed_len;
-                }
+                const n_read = try SPack.bitunpack(
+                    data_section[0..remainder_packed_len],
+                    0,
+                    output[0..n_remainder],
+                    remainder_width,
+                );
+                std.debug.assert(n_read == remainder_packed_len);
+                offset += remainder_packed_len;
             }
+            // if (n_remainder > 0) {
+            //     // How big a block of packed data with remainder_width would be
+            //     const block_needed_len = @as(u64, remainder_width) * 1024 / N_BITS;
+
+            //     if (data_section.len >= block_needed_len) {
+            //         // there is enough data after the remainder section
+            //         // we can just unpack a full block with remainder_width
+            //         // and then discard the unneeded part
+
+            //         const block: []align(1) const T = data_section[0..block_needed_len];
+
+            //         if (output.len >= 1024) {
+            //             _ = FL.dyn_bit_unpack(block, output[0..1024], remainder_width);
+            //         } else {
+            //             var out = std.mem.zeroes([1024]T);
+            //             _ = FL.dyn_bit_unpack(block, &out, remainder_width);
+            //             @memcpy(output[0..n_remainder], out[0..n_remainder]);
+            //         }
+
+            //         offset += remainder_packed_len;
+            //     } else {
+            //         // there is not enough data after the remainder section
+            //         // we have to copy packed remainder data somewhere to create a 1024
+            //         // length input for unpacking
+            //         //
+            //         // WARNING: there can be actual full blocks after remainder data
+            //         // even if thre is not enough data to have a pseudo full block
+            //         // with remainder data width. This is because the packed full blocks that come
+            //         // after the packed remainder data might have lower bit width than the remainder data.
+
+            //         var block = std.mem.zeroes([1024]T);
+
+            //         // copy from remainder packed data
+            //         @memcpy(block[0..remainder_packed_len], data_section);
+
+            //         const block_slice = block[0..block_needed_len];
+
+            //         if (output.len >= 1024) {
+            //             _ = FL.dyn_bit_unpack(block_slice, output[0..1024], remainder_width);
+            //         } else {
+            //             var out = std.mem.zeroes([1024]T);
+            //             _ = FL.dyn_bit_unpack(block_slice, &out, remainder_width);
+            //             @memcpy(output[0..n_remainder], out[0..n_remainder]);
+            //         }
+
+            //         offset += remainder_packed_len;
+            //     }
+            // }
 
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
@@ -310,6 +341,10 @@ fn Context(comptime T: type) type {
                 Z.bitpack_compress_bound(MAX_NUM_INTS),
             ) catch unreachable;
 
+            // @memset(input, 0);
+            // @memset(output, 0);
+            // @memset(compressed, 0);
+
             return .{
                 .input = input,
                 .output = output,
@@ -361,9 +396,7 @@ fn Roundtrip(comptime T: type) type {
                 ctx.output[0..in.len],
             ) catch unreachable;
 
-            std.debug.assert(
-                std.mem.eql(T, in, ctx.output[0..in.len]),
-            );
+            try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
         }
 
         pub fn tst() !void {
