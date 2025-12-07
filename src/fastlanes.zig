@@ -33,8 +33,8 @@ pub fn FastLanes(comptime T: type) type {
         const N_BITS = @sizeOf(T) * 8;
         const N_LANES = 1024 / N_BITS;
 
-        fn mask(width: usize) T {
-            return (@as(T, 1) << @intCast(width)) - 1;
+        fn mask(width: comptime_int) T {
+            return (1 << width) - 1;
         }
 
         pub fn delta(
@@ -397,9 +397,10 @@ fn Test(comptime T: type) type {
             var in: [1024]T = @bitCast(input[1 .. 1 + @sizeOf(T) * 1024].*);
 
             if (!has_zeroes) {
+                const replacement = in[0] +| 1;
                 for (0..1024) |i| {
                     if (in[i] == 0) {
-                        in[i] = 69;
+                        in[i] = replacement;
                     }
                 }
             }
