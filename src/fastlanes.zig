@@ -89,7 +89,7 @@ pub fn FastLanes(comptime T: type) type {
 
         pub fn dyn_bit_pack(
             noalias input: *const [1024]T,
-            noalias output: []T,
+            noalias output: []align(1) T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -103,7 +103,7 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_bit_unpack(
-            noalias input: []const T,
+            noalias input: []align(1) const T,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
@@ -176,7 +176,7 @@ pub fn FastLanes(comptime T: type) type {
                 inline fn pack(
                     ctx: anytype,
                     comptime kernel: fn (@TypeOf(ctx), idx: usize) T,
-                    noalias output: *[PACKED_LEN]T,
+                    noalias output: *align(1) [PACKED_LEN]T,
                     lane: usize,
                 ) void {
                     if (W == 0) {
@@ -217,7 +217,7 @@ pub fn FastLanes(comptime T: type) type {
                 inline fn unpack(
                     ctx: anytype,
                     comptime kernel: fn (@TypeOf(ctx), idx: usize, elem: T) void,
-                    noalias input: *const [PACKED_LEN]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
                     lane: usize,
                 ) void {
                     if (W == 0) {
@@ -262,7 +262,7 @@ pub fn FastLanes(comptime T: type) type {
 
                 pub fn bit_pack(
                     noalias input: *const [1024]T,
-                    noalias output: *[PACKED_LEN]T,
+                    noalias output: *align(1) [PACKED_LEN]T,
                 ) void {
                     const Kernel = struct {
                         fn kernel(in: *const [1024]T, idx: usize) T {
@@ -276,7 +276,7 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn bit_unpack(
-                    noalias input: *const [PACKED_LEN]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
                     noalias output: *[1024]T,
                 ) void {
                     const Kernel = struct {
