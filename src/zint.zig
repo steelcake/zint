@@ -297,6 +297,9 @@ fn Unsigned(comptime T: type) type {
                 std.debug.assert(n_written == remainder_packed_len);
                 offset += remainder_packed_len;
             } else {
+                out[offset] = 0;
+                offset += 1;
+
                 output[4] = 0;
             }
 
@@ -380,6 +383,9 @@ fn Unsigned(comptime T: type) type {
                 );
                 std.debug.assert(n_read == remainder_packed_len);
                 offset += remainder_packed_len;
+            } else {
+                // as if we read remainder data min value
+                offset += 1;
             }
 
             // Read whole blocks
