@@ -120,7 +120,7 @@ pub fn FastLanes(comptime T: type) type {
         pub fn dyn_for_pack(
             noalias input: *const [1024]T,
             reference: T,
-            noalias output: []T,
+            noalias output: []align(1) T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -134,7 +134,7 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_for_unpack(
-            noalias input: []const T,
+            noalias input: []align(1) const T,
             reference: T,
             noalias output: *[1024]T,
             width: usize,
@@ -293,7 +293,7 @@ pub fn FastLanes(comptime T: type) type {
                 pub fn for_pack(
                     noalias input: *const [1024]T,
                     reference: T,
-                    noalias output: *[PACKED_LEN]T,
+                    noalias output: *align(1) [PACKED_LEN]T,
                 ) void {
                     const Ctx = struct {
                         ref: T,
@@ -317,7 +317,7 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn for_unpack(
-                    noalias input: *const [PACKED_LEN]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
                     reference: T,
                     noalias output: *[1024]T,
                 ) void {
