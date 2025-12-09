@@ -17,603 +17,6 @@ const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
 pub const Error = error{InvalidInput};
 
-// fn Signed(comptime T: type) type {
-//     switch (T) {
-//         i8, i16, i32, i64 => {},
-//         else => @compileError("unexpected type"),
-//     }
-
-//     const ZZ = ZigZag(T);
-//     const FL = FastLanes(ZZ.U);
-//     const SPack = ScalarBitpack(ZZ.U);
-//
-//     const U = Unsigned(ZZ.U);
-
-//     const N_BYTES = @sizeOf(T);
-//     const N_BITS = N_BYTES * 8;
-
-//     const Head = packed struct(u8) {
-//         is_zigzag: u1,
-//         bit_width: u7,
-//     };
-
-//     return struct {
-//         /// Returns the number of BYTES needed on the output buffer for compressing
-//         /// `len` elements. The compression will likely end up writing less data
-//         /// but this is needed to make sure the compression will succeed.
-//         fn bitpack_compress_bound(len: u32) u32 {
-//             const n_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             const max_block_size = N_BYTES * 1024;
-
-//             // Layout of the output is:
-//             // - remainder values Head
-//             // - Head per block
-//             // - packed remainder values
-//             // - packed full blocks
-
-//             return 1 + n_blocks + n_remainder * N_BYTES + max_block_size * n_blocks;
-//         }
-
-//         /// Compress the input integers into the output buffer.
-//         /// `output` should be at least `bitpack_compress_bound(input.len)` BYTES.
-//         ///
-//         /// Returns the number of bytes written to the output.
-//         fn bitpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
-//             if (input.len > std.math.maxInt(u32)) {
-//                 return Error.InvalidInput;
-//             }
-//             const len: u32 = @intCast(input.len);
-
-//             const n_whole_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             const output_bound = bitpack_compress_bound(len);
-//             if (output.len < output_bound) {
-//                 return Error.InvalidInput;
-//             }
-
-//             // Start writing compressed data, skip some bytes for saving bit_widths later on
-//             // 1 is for the byte_width of remainder data, rest is for
-//             // byte widths of whole blocks.
-//             const byte_offset = 1 + n_whole_blocks;
-
-//             // We should have this much capacity even though we will write less
-//             const out_t_len = 1024 * n_whole_blocks + n_remainder;
-
-//             const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
-//             std.debug.assert(out.len == out_t_len);
-
-//             // number of T written so far, NOT number of bytes
-//             var offset: usize = 0;
-
-//             // write remainder data
-//             if (n_remainder > 0) {
-//                 const max = std.mem.max(T, input[0..n_remainder]);
-//                 const width = needed_width(max);
-
-//                 output[0] = width;
-
-//                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
-//                 const n_written = SPack.bitpack(
-//                     input[0..n_remainder],
-//                     0,
-//                     out,
-//                     width,
-//                 ) catch {
-//                     @panic("failed scalar pack, this should never happen");
-//                 };
-//                 std.debug.assert(n_written == remainder_packed_len);
-//                 offset += remainder_packed_len;
-//             } else {
-//                 output[0] = 0;
-//             }
-
-//             // Write whole blocks
-//             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
-//             for (0..n_whole_blocks) |block_idx| {
-//                 const block: *const [1024]T = &input_blocks[block_idx];
-
-//                 const max = max1024(block);
-//                 const width = needed_width(max);
-
-//                 output[1 + block_idx] = width;
-
-//                 offset += FL.dyn_bit_pack(block, out[offset..], width);
-//             }
-
-//             return byte_offset + N_BYTES * offset;
-//         }
-
-//         fn bitpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
-//             if (output.len > std.math.maxInt(u32)) {
-//                 return Error.InvalidInput;
-//             }
-//             const len: u32 = @intCast(output.len);
-
-//             const n_whole_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             if (input.len < 1 + n_whole_blocks) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const remainder_width = input[0];
-//             if (remainder_width > N_BITS) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const block_widths = input[1 .. 1 + n_whole_blocks];
-
-//             const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
-//             var total_packed_len = remainder_packed_len;
-//             for (block_widths) |w| {
-//                 if (w > N_BITS) {
-//                     return Error.InvalidInput;
-//                 }
-//             }
-//             for (block_widths) |w| {
-//                 total_packed_len += @as(u64, w) * 1024 / N_BITS;
-//             }
-
-//             const data_section_byte_offset = 1 + n_whole_blocks;
-
-//             const data_section_bytes = input[data_section_byte_offset..];
-//             if (data_section_bytes.len != total_packed_len * N_BYTES) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const data_section: []align(1) const T = @ptrCast(data_section_bytes);
-
-//             // number of T read so far, NOT number of bytes
-//             var offset: usize = 0;
-
-//             // read remainder data
-//             if (n_remainder > 0) {
-//                 const n_read = try SPack.bitunpack(
-//                     data_section[0..remainder_packed_len],
-//                     0,
-//                     output[0..n_remainder],
-//                     remainder_width,
-//                 );
-//                 std.debug.assert(n_read == remainder_packed_len);
-//                 offset += remainder_packed_len;
-//             }
-
-//             // Read whole blocks
-//             for (0..n_whole_blocks) |block_idx| {
-//                 const width = block_widths[block_idx];
-
-//                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-
-//                 offset += FL.dyn_bit_unpack(data_section[offset..], out_offset[0..1024], width);
-//             }
-
-//             std.debug.assert(offset == total_packed_len);
-//             std.debug.assert(offset == data_section.len);
-
-//             const end = data_section_byte_offset + @sizeOf(T) * offset;
-//             if (end != input.len) {
-//                 return Error.InvalidInput;
-//             }
-
-//             return;
-//         }
-
-//         /// Returns the number of BYTES needed on the output buffer for compressing
-//         /// `len` elements. The compression will likely end up writing less data
-//         /// but this is needed to make sure the compression will succeed.
-//         fn forpack_compress_bound(len: u32) u32 {
-//             const n_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             const max_block_size = N_BYTES * (1024 + 1);
-
-//             // Layout of the output is:
-//             // - remainder values bit_width(u8)
-//             // - bit_width(u8) per block
-//             // - packed remainder values, a reference value before the packed values
-//             // - packed full blocks, a reference value before every block
-
-//             return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
-//         }
-
-//         /// Compress the input integers into the output buffer.
-//         /// `output` should be at least `forpack_compress_bound(input.len)` BYTES.
-//         ///
-//         /// Returns the number of bytes written to the output.
-//         fn forpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
-//             if (input.len > std.math.maxInt(u32)) {
-//                 return Error.InvalidInput;
-//             }
-//             const len: u32 = @intCast(input.len);
-
-//             const n_whole_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             const output_bound = forpack_compress_bound(len);
-//             if (output.len < output_bound) {
-//                 return Error.InvalidInput;
-//             }
-
-//             // Start writing compressed data, skip some bytes for saving bit_widths later on
-//             // 1 is for the byte_width of remainder data, rest is for
-//             // byte widths of whole blocks.
-//             const byte_offset = 1 + n_whole_blocks;
-
-//             // We should have this much capacity even though we will write less
-//             const out_t_len = (1024 + 1) * n_whole_blocks + 1 + n_remainder;
-
-//             const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
-//             std.debug.assert(out.len == out_t_len);
-
-//             // number of T written so far, NOT number of bytes
-//             var offset: usize = 0;
-
-//             // write remainder data
-//             if (n_remainder > 0) {
-//                 const min, const max = std.mem.minMax(T, input[0..n_remainder]);
-//                 const width = needed_width(max - min);
-
-//                 output[0] = width;
-
-//                 out[0] = min;
-//                 offset += 1;
-
-//                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
-//                 const n_written = SPack.bitpack(
-//                     input[0..n_remainder],
-//                     min,
-//                     out[offset..],
-//                     width,
-//                 ) catch {
-//                     @panic("failed scalar pack, this should never happen");
-//                 };
-//                 std.debug.assert(n_written == remainder_packed_len);
-//                 offset += remainder_packed_len;
-//             } else {
-//                 out[offset] = 0;
-//                 offset += 1;
-
-//                 output[0] = 0;
-//             }
-
-//             // Write whole blocks
-//             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
-//             for (0..n_whole_blocks) |block_idx| {
-//                 const block: *const [1024]T = &input_blocks[block_idx];
-
-//                 const min, const max = minmax1024(block);
-//                 const width = needed_width(max - min);
-
-//                 output[1 + block_idx] = width;
-
-//                 out[offset] = min;
-//                 offset += 1;
-
-//                 offset += FL.dyn_for_pack(block, min, out[offset..], width);
-//             }
-
-//             return byte_offset + N_BYTES * offset;
-//         }
-
-//         fn forpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
-//             if (output.len > std.math.maxInt(u32)) {
-//                 return Error.InvalidInput;
-//             }
-//             const len: u32 = @intCast(output.len);
-
-//             const n_whole_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             if (input.len < 1 + n_whole_blocks) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const remainder_width = input[0];
-//             if (remainder_width > N_BITS) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const block_widths = input[1 .. 1 + n_whole_blocks];
-
-//             const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
-//             var total_packed_len = remainder_packed_len + 1;
-//             for (block_widths) |w| {
-//                 if (w > N_BITS) {
-//                     return Error.InvalidInput;
-//                 }
-//             }
-//             for (block_widths) |w| {
-//                 total_packed_len += @as(u64, w) * 1024 / N_BITS + 1;
-//             }
-
-//             const data_section_byte_offset = 1 + n_whole_blocks;
-
-//             const data_section_bytes = input[data_section_byte_offset..];
-//             if (data_section_bytes.len != total_packed_len * N_BYTES) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const data_section: []align(1) const T = @ptrCast(data_section_bytes);
-
-//             // number of T read so far, NOT number of bytes
-//             var offset: usize = 0;
-
-//             // read remainder data
-//             if (n_remainder > 0) {
-//                 const ref = data_section[offset];
-//                 offset += 1;
-
-//                 const n_read = try SPack.bitunpack(
-//                     data_section[offset .. offset + remainder_packed_len],
-//                     ref,
-//                     output[0..n_remainder],
-//                     remainder_width,
-//                 );
-//                 std.debug.assert(n_read == remainder_packed_len);
-//                 offset += remainder_packed_len;
-//             } else {
-//                 // as if we read remainder data min value
-//                 offset += 1;
-//             }
-
-//             // Read whole blocks
-//             for (0..n_whole_blocks) |block_idx| {
-//                 const width = block_widths[block_idx];
-
-//                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-
-//                 const ref = data_section[offset];
-//                 offset += 1;
-
-//                 offset += FL.dyn_for_unpack(data_section[offset..], ref, out_offset[0..1024], width);
-//             }
-
-//             std.debug.assert(offset == total_packed_len);
-//             std.debug.assert(offset == data_section.len);
-
-//             const end = data_section_byte_offset + @sizeOf(T) * offset;
-//             if (end != input.len) {
-//                 return Error.InvalidInput;
-//             }
-
-//             return;
-//         }
-
-//         /// Returns the number of BYTES needed on the output buffer for compressing
-//         /// `len` elements. The compression will likely end up writing less data
-//         /// but this is needed to make sure the compression will succeed.
-//         fn delta_compress_bound(len: u32) u32 {
-//             const n_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             const max_block_size = N_BYTES * (FL.N_LANES + 1024);
-
-//             // Layout of the output is:
-//             // - remainder values bit_width(u8)
-//             // - bit_width(u8) per block
-//             // - packed remainder values, a base value before the values
-//             // - packed full blocks, N_LANES "bases" T before each block
-
-//             return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
-//         }
-
-//         /// Compress the input integers into the output buffer.
-//         /// `output` should be at least `delta_compress_bound(input.len)` BYTES.
-//         ///
-//         /// `transposed` and `delta` inputs are for using as internal scratch memory.
-//         ///
-//         /// Returns the number of bytes written to the output.
-//         fn delta_compress(
-//             noalias transposed: *[1024]T,
-//             noalias delta: *[1024]T,
-//             noalias input: []const T,
-//             noalias output: []u8,
-//         ) Error!usize {
-//             if (input.len > std.math.maxInt(u32)) {
-//                 return Error.InvalidInput;
-//             }
-//             const len: u32 = @intCast(input.len);
-
-//             const n_whole_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             const output_bound = delta_compress_bound(len);
-//             if (output.len < output_bound) {
-//                 return Error.InvalidInput;
-//             }
-
-//             // Start writing compressed data, skip some bytes for saving bit_widths later on
-//             // 1 is for the byte_width of remainder data, rest is for
-//             // byte widths of whole blocks.
-//             const byte_offset = 1 + n_whole_blocks;
-
-//             // We should have this much capacity even though we will write less
-//             const out_t_len = (FL.N_LANES + 1024) * n_whole_blocks + 1 + n_remainder;
-
-//             const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
-//             std.debug.assert(out.len == out_t_len);
-
-//             // number of T written so far, NOT number of bytes
-//             var offset: usize = 0;
-
-//             // write remainder data
-//             if (n_remainder > 0) {
-//                 const base = input[0];
-
-//                 var prev = base;
-//                 var max_delta: T = 0;
-//                 for (input[0..n_remainder]) |v| {
-//                     const d = v -% prev;
-//                     max_delta = @max(max_delta, d);
-//                     prev = v;
-//                 }
-//                 const width = needed_width(max_delta);
-
-//                 output[0] = width;
-
-//                 out[offset] = base;
-//                 offset += 1;
-
-//                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
-//                 const n_written = SPack.delta_bitpack(
-//                     base,
-//                     input[0..n_remainder],
-//                     out[offset..],
-//                     width,
-//                 ) catch {
-//                     @panic("failed scalar pack, this should never happen");
-//                 };
-//                 std.debug.assert(n_written == remainder_packed_len);
-//                 offset += remainder_packed_len;
-//             } else {
-//                 output[0] = 0;
-
-//                 out[offset] = 0;
-//                 offset += 1;
-//             }
-
-//             // Write whole blocks
-//             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
-//             for (0..n_whole_blocks) |block_idx| {
-//                 const block: *const [1024]T = &input_blocks[block_idx];
-
-//                 FL.transpose(block, transposed);
-
-//                 const bases: *const [FL.N_LANES]T = transposed[0..FL.N_LANES];
-
-//                 FL.delta(transposed, bases, delta);
-
-//                 const max = max1024(delta);
-//                 const width = needed_width(max);
-
-//                 output[1 + block_idx] = width;
-
-//                 for (0..FL.N_LANES) |i| {
-//                     out[offset + i] = bases[i];
-//                 }
-//                 offset += FL.N_LANES;
-
-//                 offset += FL.dyn_bit_pack(delta, out[offset..], width);
-//             }
-
-//             return byte_offset + N_BYTES * offset;
-//         }
-
-//         fn delta_decompress(noalias transposed: *[1024]T, noalias input: []const u8, noalias output: []T) Error!void {
-//             if (output.len > std.math.maxInt(u32)) {
-//                 return Error.InvalidInput;
-//             }
-//             const len: u32 = @intCast(output.len);
-
-//             const n_whole_blocks = len / 1024;
-//             const n_remainder = len % 1024;
-
-//             if (input.len < 1 + n_whole_blocks) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const remainder_width = input[0];
-//             if (remainder_width > N_BITS) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const block_widths = input[1 .. 1 + n_whole_blocks];
-
-//             const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
-//             var total_packed_len = remainder_packed_len + 1;
-//             for (block_widths) |w| {
-//                 if (w > N_BITS) {
-//                     return Error.InvalidInput;
-//                 }
-//             }
-//             for (block_widths) |w| {
-//                 total_packed_len += @as(u64, w) * 1024 / N_BITS + FL.N_LANES;
-//             }
-
-//             const data_section_byte_offset = 1 + n_whole_blocks;
-
-//             const data_section_bytes = input[data_section_byte_offset..];
-//             if (data_section_bytes.len != total_packed_len * N_BYTES) {
-//                 return Error.InvalidInput;
-//             }
-
-//             const data_section: []align(1) const T = @ptrCast(data_section_bytes);
-
-//             // number of T read so far, NOT number of bytes
-//             var offset: usize = 0;
-
-//             // read remainder data
-//             if (n_remainder > 0) {
-//                 const base = data_section[0];
-//                 offset += 1;
-
-//                 const n_read = try SPack.delta_unpack(
-//                     base,
-//                     data_section[offset .. offset + remainder_packed_len],
-//                     output[0..n_remainder],
-//                     remainder_width,
-//                 );
-//                 std.debug.assert(n_read == remainder_packed_len);
-//                 offset += remainder_packed_len;
-//             } else {
-//                 offset += 1;
-//             }
-
-//             // Read whole blocks
-//             for (0..n_whole_blocks) |block_idx| {
-//                 const width = block_widths[block_idx];
-
-//                 const bases_p = data_section[offset..];
-//                 const bases: *align(1) const [FL.N_LANES]T = bases_p[0..FL.N_LANES];
-//                 offset += FL.N_LANES;
-
-//                 offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed, width);
-
-//                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-//                 FL.untranspose(transposed, out_offset[0..1024]);
-//             }
-
-//             std.debug.assert(offset == total_packed_len);
-//             std.debug.assert(offset == data_section.len);
-
-//             const end = data_section_byte_offset + @sizeOf(T) * offset;
-//             if (end != input.len) {
-//                 return Error.InvalidInput;
-//             }
-
-//             return;
-//         }
-
-//         fn max1024(input: *const [1024]ZZ.U) ZZ.U {
-//             var m = input[0];
-//             for (0..1024) |i| {
-//                 m = @max(input[i], m);
-//             }
-//             return m;
-//         }
-
-//         fn minmax1024(input: *const [1024]ZZ.U) struct { ZZ.U, ZZ.U } {
-//             var min = input[0];
-//             var max = input[0];
-
-//             for (0..1024) |i| {
-//                 min = @min(input[i], min);
-//                 max = @max(input[i], max);
-//             }
-
-//             return .{ min, max };
-//         }
-
-//         fn needed_width(range: ZZ.U) u8 {
-//             return N_BITS - @clz(range);
-//         }
-
-//     };
-// }
-
 fn Basic(comptime T: type) type {
     const U = switch (T) {
         u8, u16, u32, u64 => T,
@@ -632,11 +35,6 @@ fn Basic(comptime T: type) type {
     const N_BYTES = @sizeOf(U);
     const N_BITS = N_BYTES * 8;
 
-    const Head = packed struct(u8) {
-        is_zigzag: u1,
-        bit_width: u7,
-    };
-
     return struct {
         /// Returns the number of BYTES needed on the output buffer for compressing
         /// `len` elements. The compression will likely end up writing less data
@@ -648,12 +46,12 @@ fn Basic(comptime T: type) type {
             const max_block_size = N_BYTES * 1024;
 
             // Layout of the output is:
-            // - remainder values Head
-            // - Head per block
+            // - remainder values bit_width(u8)
+            // - bit_width(u8) per block
             // - packed remainder values
             // - packed full blocks
 
-            return @sizeOf(Head) * (1 + n_blocks) + n_remainder * N_BYTES + max_block_size * n_blocks;
+            return 1 + n_blocks + n_remainder * N_BYTES + max_block_size * n_blocks;
         }
 
         /// Compress the input integers into the output buffer.
@@ -690,7 +88,7 @@ fn Basic(comptime T: type) type {
 
             // write remainder data
             if (n_remainder > 0) {
-                const remainder_data, const is_zigzag = load_remainder(
+                const remainder_data = load_remainder(
                     input[0..n_remainder],
                     scratch[0..n_remainder],
                 );
@@ -698,10 +96,7 @@ fn Basic(comptime T: type) type {
                 const max = std.mem.max(U, remainder_data);
                 const width = needed_width(max);
 
-                output[0] = @bitCast(Head{
-                    .bit_width = width,
-                    .is_zigzag = is_zigzag,
-                });
+                output[0] = width;
 
                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
                 const n_written = SPack.bitpack(
@@ -721,15 +116,12 @@ fn Basic(comptime T: type) type {
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (0..n_whole_blocks) |block_idx| {
-                const block, const is_zigzag = load_block(&input_blocks[block_idx], scratch);
+                const block = load_block(&input_blocks[block_idx], scratch);
 
                 const max = max1024(block);
                 const width = needed_width(max);
 
-                output[1 + block_idx] = @bitCast(Head{
-                    .bit_width = width,
-                    .is_zigzag = is_zigzag,
-                });
+                output[1 + block_idx] = width;
 
                 offset += FL.dyn_bit_pack(block, out[offset..], width);
             }
@@ -750,22 +142,22 @@ fn Basic(comptime T: type) type {
                 return Error.InvalidInput;
             }
 
-            const remainder_head: Head = @bitCast(input[0]);
-            if (remainder_head.bit_width > N_BITS) {
+            const remainder_width = input[0];
+            if (remainder_width > N_BITS) {
                 return Error.InvalidInput;
             }
 
-            const block_heads: []const Head = @ptrCast(input[1 .. 1 + n_whole_blocks]);
+            const block_widths = input[1 .. 1 + n_whole_blocks];
 
-            const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_head.bit_width) + N_BITS - 1) / N_BITS;
+            const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
             var total_packed_len = remainder_packed_len;
-            for (block_heads) |h| {
-                if (h.bit_width > N_BITS) {
+            for (block_widths) |w| {
+                if (w > N_BITS) {
                     return Error.InvalidInput;
                 }
             }
-            for (block_heads) |h| {
-                total_packed_len += @as(u64, h.bit_width) * 1024 / N_BITS;
+            for (block_widths) |w| {
+                total_packed_len += @as(u64, w) * 1024 / N_BITS;
             }
 
             const data_section_byte_offset = 1 + n_whole_blocks;
@@ -783,31 +175,21 @@ fn Basic(comptime T: type) type {
             // read remainder data
             if (n_remainder > 0) {
                 if (IS_SIGNED) {
-                    if (remainder_head.is_zigzag == 1) {
-                        const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
-                        const n_read = try SPack.bitunpack(
-                            data_section[0..remainder_packed_len],
-                            0,
-                            zigzagged,
-                            remainder_head.bit_width,
-                        );
-                        std.debug.assert(n_read == remainder_packed_len);
-                        ZigZag(T).decode(zigzagged, output[0..n_remainder]);
-                    } else {
-                        const n_read = try SPack.bitunpack(
-                            data_section[0..remainder_packed_len],
-                            0,
-                            @ptrCast(output[0..n_remainder]),
-                            remainder_head.bit_width,
-                        );
-                        std.debug.assert(n_read == remainder_packed_len);
-                    }
+                    const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
+                    const n_read = try SPack.bitunpack(
+                        data_section[0..remainder_packed_len],
+                        0,
+                        zigzagged,
+                        remainder_width,
+                    );
+                    std.debug.assert(n_read == remainder_packed_len);
+                    ZigZag(T).decode(zigzagged, output[0..n_remainder]);
                 } else {
                     const n_read = try SPack.bitunpack(
                         data_section[0..remainder_packed_len],
                         0,
                         output[0..n_remainder],
-                        remainder_head.bit_width,
+                        remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
                 }
@@ -816,30 +198,22 @@ fn Basic(comptime T: type) type {
 
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
-                const head = block_heads[block_idx];
+                const width = block_widths[block_idx];
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 if (IS_SIGNED) {
-                    if (head.is_zigzag == 1) {
-                        const zigzagged: *[1024]U = @ptrCast(scratch);
-                        offset += FL.dyn_bit_unpack(
-                            data_section[offset..],
-                            zigzagged,
-                            head.bit_width,
-                        );
-                        ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
-                    } else {
-                        offset += FL.dyn_bit_unpack(
-                            data_section[offset..],
-                            @ptrCast(out_offset[0..1024]),
-                            head.bit_width,
-                        );
-                    }
+                    const zigzagged: *[1024]U = @ptrCast(scratch);
+                    offset += FL.dyn_bit_unpack(
+                        data_section[offset..],
+                        zigzagged,
+                        width,
+                    );
+                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
                 } else {
                     offset += FL.dyn_bit_unpack(
                         data_section[offset..],
                         out_offset[0..1024],
-                        head.bit_width,
+                        width,
                     );
                 }
             }
@@ -855,186 +229,219 @@ fn Basic(comptime T: type) type {
             return;
         }
 
-        // /// Returns the number of BYTES needed on the output buffer for compressing
-        // /// `len` elements. The compression will likely end up writing less data
-        // /// but this is needed to make sure the compression will succeed.
-        // fn forpack_compress_bound(len: u32) u32 {
-        //     const n_blocks = len / 1024;
-        //     const n_remainder = len % 1024;
+        /// Returns the number of BYTES needed on the output buffer for compressing
+        /// `len` elements. The compression will likely end up writing less data
+        /// but this is needed to make sure the compression will succeed.
+        fn forpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
 
-        //     const max_block_size = N_BYTES * (1024 + 1);
+            const max_block_size = N_BYTES * (1024 + 1);
 
-        //     // Layout of the output is:
-        //     // - remainder values bit_width(u8)
-        //     // - bit_width(u8) per block
-        //     // - packed remainder values, a reference value before the packed values
-        //     // - packed full blocks, a reference value before every block
+            // Layout of the output is:
+            // - remainder values bit_width(u8)
+            // - bit_width(u8) per block
+            // - packed remainder values, a reference value before the packed values
+            // - packed full blocks, a reference value before every block
 
-        //     return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
-        // }
+            return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
+        }
 
-        // /// Compress the input integers into the output buffer.
-        // /// `output` should be at least `forpack_compress_bound(input.len)` BYTES.
-        // ///
-        // /// Returns the number of bytes written to the output.
-        // fn forpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
-        //     if (input.len > std.math.maxInt(u32)) {
-        //         return Error.InvalidInput;
-        //     }
-        //     const len: u32 = @intCast(input.len);
+        /// Compress the input integers into the output buffer.
+        /// `output` should be at least `forpack_compress_bound(input.len)` BYTES.
+        ///
+        /// Returns the number of bytes written to the output.
+        fn forpack_compress(noalias scratch: *[1024]T, noalias input: []const T, noalias output: []u8) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
 
-        //     const n_whole_blocks = len / 1024;
-        //     const n_remainder = len % 1024;
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
 
-        //     const output_bound = forpack_compress_bound(len);
-        //     if (output.len < output_bound) {
-        //         return Error.InvalidInput;
-        //     }
+            const output_bound = forpack_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
 
-        //     // Start writing compressed data, skip some bytes for saving bit_widths later on
-        //     // 1 is for the byte_width of remainder data, rest is for
-        //     // byte widths of whole blocks.
-        //     const byte_offset = 1 + n_whole_blocks;
+            // Start writing compressed data, skip some bytes for saving bit_widths later on
+            // 1 is for the byte_width of remainder data, rest is for
+            // byte widths of whole blocks.
+            const byte_offset = 1 + n_whole_blocks;
 
-        //     // We should have this much capacity even though we will write less
-        //     const out_t_len = (1024 + 1) * n_whole_blocks + 1 + n_remainder;
+            // We should have this much capacity even though we will write less
+            const out_t_len = (1024 + 1) * n_whole_blocks + 1 + n_remainder;
 
-        //     const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
-        //     std.debug.assert(out.len == out_t_len);
+            const out: []align(1) U = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
+            std.debug.assert(out.len == out_t_len);
 
-        //     // number of T written so far, NOT number of bytes
-        //     var offset: usize = 0;
+            // number of T written so far, NOT number of bytes
+            var offset: usize = 0;
 
-        //     // write remainder data
-        //     if (n_remainder > 0) {
-        //         const min, const max = std.mem.minMax(T, input[0..n_remainder]);
-        //         const width = needed_width(max - min);
+            // write remainder data
+            if (n_remainder > 0) {
+                const remainder_data = load_remainder(input[0..n_remainder], scratch[0..n_remainder]);
 
-        //         output[0] = width;
+                const min, const max = std.mem.minMax(U, remainder_data);
+                const width = needed_width(max - min);
 
-        //         out[0] = min;
-        //         offset += 1;
+                output[0] = width;
 
-        //         const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
-        //         const n_written = SPack.bitpack(
-        //             input[0..n_remainder],
-        //             min,
-        //             out[offset..],
-        //             width,
-        //         ) catch {
-        //             @panic("failed scalar pack, this should never happen");
-        //         };
-        //         std.debug.assert(n_written == remainder_packed_len);
-        //         offset += remainder_packed_len;
-        //     } else {
-        //         out[offset] = 0;
-        //         offset += 1;
+                out[0] = min;
+                offset += 1;
 
-        //         output[0] = 0;
-        //     }
+                const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
+                const n_written = SPack.bitpack(
+                    remainder_data,
+                    min,
+                    out[offset..],
+                    width,
+                ) catch {
+                    @panic("failed scalar pack, this should never happen");
+                };
+                std.debug.assert(n_written == remainder_packed_len);
+                offset += remainder_packed_len;
+            } else {
+                out[offset] = 0;
+                offset += 1;
 
-        //     // Write whole blocks
-        //     const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
-        //     for (0..n_whole_blocks) |block_idx| {
-        //         const block: *const [1024]T = &input_blocks[block_idx];
+                output[0] = 0;
+            }
 
-        //         const min, const max = minmax1024(block);
-        //         const width = needed_width(max - min);
+            // Write whole blocks
+            const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (0..n_whole_blocks) |block_idx| {
+                const block = load_block(&input_blocks[block_idx], scratch);
 
-        //         output[1 + block_idx] = width;
+                const min, const max = minmax1024(block);
+                const width = needed_width(max - min);
 
-        //         out[offset] = min;
-        //         offset += 1;
+                output[1 + block_idx] = width;
 
-        //         offset += FL.dyn_for_pack(block, min, out[offset..], width);
-        //     }
+                out[offset] = min;
+                offset += 1;
 
-        //     return byte_offset + N_BYTES * offset;
-        // }
+                offset += FL.dyn_for_pack(block, min, out[offset..], width);
+            }
 
-        // fn forpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
-        //     if (output.len > std.math.maxInt(u32)) {
-        //         return Error.InvalidInput;
-        //     }
-        //     const len: u32 = @intCast(output.len);
+            return byte_offset + N_BYTES * offset;
+        }
 
-        //     const n_whole_blocks = len / 1024;
-        //     const n_remainder = len % 1024;
+        fn forpack_decompress(
+            noalias scratch: *[1024]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!void {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
 
-        //     if (input.len < 1 + n_whole_blocks) {
-        //         return Error.InvalidInput;
-        //     }
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
 
-        //     const remainder_width = input[0];
-        //     if (remainder_width > N_BITS) {
-        //         return Error.InvalidInput;
-        //     }
+            if (input.len < 1 + n_whole_blocks) {
+                return Error.InvalidInput;
+            }
 
-        //     const block_widths = input[1 .. 1 + n_whole_blocks];
+            const remainder_width = input[0];
+            if (remainder_width > N_BITS) {
+                return Error.InvalidInput;
+            }
 
-        //     const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
-        //     var total_packed_len = remainder_packed_len + 1;
-        //     for (block_widths) |w| {
-        //         if (w > N_BITS) {
-        //             return Error.InvalidInput;
-        //         }
-        //     }
-        //     for (block_widths) |w| {
-        //         total_packed_len += @as(u64, w) * 1024 / N_BITS + 1;
-        //     }
+            const block_widths = input[1 .. 1 + n_whole_blocks];
 
-        //     const data_section_byte_offset = 1 + n_whole_blocks;
+            const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
+            var total_packed_len = remainder_packed_len + 1;
+            for (block_widths) |w| {
+                if (w > N_BITS) {
+                    return Error.InvalidInput;
+                }
+            }
+            for (block_widths) |w| {
+                total_packed_len += @as(u64, w) * 1024 / N_BITS + 1;
+            }
 
-        //     const data_section_bytes = input[data_section_byte_offset..];
-        //     if (data_section_bytes.len != total_packed_len * N_BYTES) {
-        //         return Error.InvalidInput;
-        //     }
+            const data_section_byte_offset = 1 + n_whole_blocks;
 
-        //     const data_section: []align(1) const T = @ptrCast(data_section_bytes);
+            const data_section_bytes = input[data_section_byte_offset..];
+            if (data_section_bytes.len != total_packed_len * N_BYTES) {
+                return Error.InvalidInput;
+            }
 
-        //     // number of T read so far, NOT number of bytes
-        //     var offset: usize = 0;
+            const data_section: []align(1) const U = @ptrCast(data_section_bytes);
 
-        //     // read remainder data
-        //     if (n_remainder > 0) {
-        //         const ref = data_section[offset];
-        //         offset += 1;
+            // number of T read so far, NOT number of bytes
+            var offset: usize = 0;
 
-        //         const n_read = try SPack.bitunpack(
-        //             data_section[offset .. offset + remainder_packed_len],
-        //             ref,
-        //             output[0..n_remainder],
-        //             remainder_width,
-        //         );
-        //         std.debug.assert(n_read == remainder_packed_len);
-        //         offset += remainder_packed_len;
-        //     } else {
-        //         // as if we read remainder data min value
-        //         offset += 1;
-        //     }
+            // read remainder data
+            if (n_remainder > 0) {
+                const ref = data_section[offset];
+                offset += 1;
 
-        //     // Read whole blocks
-        //     for (0..n_whole_blocks) |block_idx| {
-        //         const width = block_widths[block_idx];
+                if (IS_SIGNED) {
+                    const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
+                    const n_read = try SPack.bitunpack(
+                        data_section[0..remainder_packed_len],
+                        ref,
+                        zigzagged,
+                        remainder_width,
+                    );
+                    std.debug.assert(n_read == remainder_packed_len);
+                    ZigZag(T).decode(zigzagged, output[0..n_remainder]);
+                } else {
+                    const n_read = try SPack.bitunpack(
+                        data_section[offset .. offset + remainder_packed_len],
+                        ref,
+                        output[0..n_remainder],
+                        remainder_width,
+                    );
+                    std.debug.assert(n_read == remainder_packed_len);
+                }
+                offset += remainder_packed_len;
+            } else {
+                // as if we read remainder data min value
+                offset += 1;
+            }
 
-        //         const out_offset = output[block_idx * 1024 + n_remainder ..];
+            // Read whole blocks
+            for (0..n_whole_blocks) |block_idx| {
+                const width = block_widths[block_idx];
 
-        //         const ref = data_section[offset];
-        //         offset += 1;
+                const ref = data_section[offset];
+                offset += 1;
 
-        //         offset += FL.dyn_for_unpack(data_section[offset..], ref, out_offset[0..1024], width);
-        //     }
+                const out_offset = output[block_idx * 1024 + n_remainder ..];
+                if (IS_SIGNED) {
+                    const zigzagged: *[1024]U = @ptrCast(scratch);
+                    offset += FL.dyn_for_unpack(
+                        data_section[offset..],
+                        ref,
+                        zigzagged,
+                        width,
+                    );
+                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
+                } else {
+                    offset += FL.dyn_for_unpack(
+                        data_section[offset..],
+                        ref,
+                        out_offset[0..1024],
+                        width,
+                    );
+                }
+            }
 
-        //     std.debug.assert(offset == total_packed_len);
-        //     std.debug.assert(offset == data_section.len);
+            std.debug.assert(offset == total_packed_len);
+            std.debug.assert(offset == data_section.len);
 
-        //     const end = data_section_byte_offset + @sizeOf(T) * offset;
-        //     if (end != input.len) {
-        //         return Error.InvalidInput;
-        //     }
+            const end = data_section_byte_offset + @sizeOf(T) * offset;
+            if (end != input.len) {
+                return Error.InvalidInput;
+            }
 
-        //     return;
-        // }
+            return;
+        }
 
         // /// Returns the number of BYTES needed on the output buffer for compressing
         // /// `len` elements. The compression will likely end up writing less data
@@ -1265,52 +672,28 @@ fn Basic(comptime T: type) type {
             return N_BITS - @clz(range);
         }
 
-        fn has_negative(input: []const T) bool {
-            var has_n: bool = false;
-            for (input) |v| {
-                has_n |= v < 0;
-            }
-            return has_n;
-        }
-
-        fn has_negative1024(input: *const [1024]T) bool {
-            var has_n: bool = false;
-            for (0..1024) |i| {
-                has_n |= input[i] < 0;
-            }
-            return has_n;
-        }
-
         /// Load input data, apply zigzag encoding if needed
         /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
-        fn load_remainder(input: []const T, scratch: []T) struct { []const U, u1 } {
+        fn load_remainder(input: []const T, scratch: []T) []const U {
             std.debug.assert(input.len == scratch.len);
             if (IS_SIGNED) {
-                if (has_negative(input)) {
-                    const zigzagged: []U = @ptrCast(scratch);
-                    ZigZag(T).encode(input, zigzagged);
-                    return .{ zigzagged, 1 };
-                } else {
-                    return .{ @ptrCast(input), 0 };
-                }
+                const zigzagged: []U = @ptrCast(scratch);
+                ZigZag(T).encode(input, zigzagged);
+                return zigzagged;
             } else {
-                return .{ @ptrCast(input), 0 };
+                return @ptrCast(input);
             }
         }
 
         /// Load input data, apply zigzag encoding if needed
         /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
-        fn load_block(input: *const [1024]T, scratch: *[1024]T) struct { *const [1024]U, u1 } {
+        fn load_block(input: *const [1024]T, scratch: *[1024]T) *const [1024]U {
             if (IS_SIGNED) {
-                if (has_negative1024(input)) {
-                    const zigzagged: *[1024]U = @ptrCast(scratch);
-                    ZigZag(T).encode(input, zigzagged);
-                    return .{ zigzagged, 1 };
-                } else {
-                    return .{ @ptrCast(input), 0 };
-                }
+                const zigzagged: *[1024]U = @ptrCast(scratch);
+                ZigZag(T).encode(input, zigzagged);
+                return zigzagged;
             } else {
-                return .{ @ptrCast(input), 0 };
+                return @ptrCast(input);
             }
         }
     };
@@ -1330,11 +713,11 @@ fn Test(comptime T: type) type {
             output: []T,
 
             fn compress_bound() usize {
-                // return @max(
-                return U.bitpack_compress_bound(MAX_NUM_INTS);
-                // U.forpack_compress_bound(MAX_NUM_INTS),
-                // U.delta_compress_bound(MAX_NUM_INTS),
-                // );
+                return @max(
+                    U.bitpack_compress_bound(MAX_NUM_INTS),
+                    U.forpack_compress_bound(MAX_NUM_INTS),
+                    // U.delta_compress_bound(MAX_NUM_INTS),
+                );
             }
 
             fn init() Context {
@@ -1408,31 +791,35 @@ fn Test(comptime T: type) type {
             try std.testing.fuzz(ctx, roundtrip_bitpack, .{});
         }
 
-        // fn roundtrip_forpack(ctx: Context, input: []const u8) anyerror!void {
-        //     const in = read_input(ctx.input, input);
+        fn roundtrip_forpack(ctx: Context, input: []const u8) anyerror!void {
+            const in = read_input(ctx.input, input);
 
-        //     const compressed_len = try U.forpack_compress(
-        //         in,
-        //         ctx.compressed,
-        //     );
+            var scratch: [1024]T = undefined;
 
-        //     std.debug.assert(
-        //         compressed_len <= U.forpack_compress_bound(MAX_NUM_INTS),
-        //     );
+            const compressed_len = try U.forpack_compress(
+                &scratch,
+                in,
+                ctx.compressed,
+            );
 
-        //     U.forpack_decompress(
-        //         ctx.compressed[0..compressed_len],
-        //         ctx.output[0..in.len],
-        //     ) catch unreachable;
+            std.debug.assert(
+                compressed_len <= U.forpack_compress_bound(MAX_NUM_INTS),
+            );
 
-        //     try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
-        // }
+            U.forpack_decompress(
+                &scratch,
+                ctx.compressed[0..compressed_len],
+                ctx.output[0..in.len],
+            ) catch unreachable;
 
-        // test roundtrip_forpack {
-        //     var ctx = Context.init();
-        //     defer ctx.deinit();
-        //     try std.testing.fuzz(ctx, roundtrip_forpack, .{});
-        // }
+            try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
+        }
+
+        test roundtrip_forpack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx, roundtrip_forpack, .{});
+        }
 
         // fn roundtrip_delta_pack(ctx: Context, input: []const u8) anyerror!void {
         //     const in = read_input(ctx.input, input);
@@ -1486,23 +873,25 @@ fn Test(comptime T: type) type {
             try std.testing.fuzz(ctx.input, garbage_bitpack, .{});
         }
 
-        // fn garbage_forpack(ctx: []T, input: []const u8) anyerror!void {
-        //     const output = ctx;
+        fn garbage_forpack(ctx: []T, input: []const u8) anyerror!void {
+            const output = ctx;
 
-        //     if (input.len < 4) {
-        //         U.forpack_decompress(input, output) catch return;
-        //     } else {
-        //         const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
-        //         const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
-        //         U.forpack_decompress(input[4..], output[0..num_ints]) catch return;
-        //     }
-        // }
+            var scratch: [1024]T = undefined;
 
-        // test garbage_forpack {
-        //     var ctx = Context.init();
-        //     defer ctx.deinit();
-        //     try std.testing.fuzz(ctx.input, garbage_forpack, .{});
-        // }
+            if (input.len < 4) {
+                U.forpack_decompress(&scratch, input, output) catch return;
+            } else {
+                const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
+                const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
+                U.forpack_decompress(&scratch, input[4..], output[0..num_ints]) catch return;
+            }
+        }
+
+        test garbage_forpack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx.input, garbage_forpack, .{});
+        }
 
         // fn garbage_delta_pack(ctx: []T, input: []const u8) anyerror!void {
         //     const output = ctx;
