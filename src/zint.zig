@@ -15,18 +15,45 @@ const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
 // fn Unsigned256(comptime T: type) type {}
 
+pub const Error = error{InvalidInput};
+
 // fn Signed(comptime T: type) type {
 //     switch (T) {
 //         i8, i16, i32, i64 => {},
 //         else => @compileError("unexpected type"),
 //     }
 
-//     // const ZZ = ZigZag(T);
+//     const ZZ = ZigZag(T);
+//     const FL = FastLanes(ZZ.U);
+//     const SPack = ScalarBitpack(ZZ.U);
 
-//     return struct {};
+//     const N_BYTES = @sizeOf(T);
+//     const N_BITS = N_BYTES * 8;
+
+//     return struct {
+//         fn has_negative(input: []const T) bool {
+//             for (input) |v| {
+//                 if (v < 0) {
+//                     return true;
+//                 }
+//             }
+//             return false;
+//         }
+
+//         fn has_negative1024(input: *const [1024]T) bool {
+//             for (0..1024) |i| {
+//                 if (input[i] < 0) {
+//                     return true;
+//                 }
+//             }
+//             return false;
+//         }
+
+//         fn needed_width(range: ZZ.U) u8 {
+//             return N_BITS - @clz(range);
+//         }
+//     };
 // }
-
-pub const Error = error{InvalidInput};
 
 fn Unsigned(comptime T: type) type {
     switch (T) {
@@ -51,13 +78,12 @@ fn Unsigned(comptime T: type) type {
             const max_block_size = N_BYTES * 1024;
 
             // Layout of the output is:
-            // - input length
             // - remainder values bit_width(u8)
             // - bit_width(u8) per block
             // - packed remainder values
             // - packed full blocks
 
-            return @sizeOf(u32) + 1 + n_blocks + n_remainder * N_BYTES + max_block_size * n_blocks;
+            return 1 + n_blocks + n_remainder * N_BYTES + max_block_size * n_blocks;
         }
 
         /// Compress the input integers into the output buffer.
@@ -78,13 +104,10 @@ fn Unsigned(comptime T: type) type {
                 return Error.InvalidInput;
             }
 
-            // write input.length
-            @as(*align(1) u32, @ptrCast(output[0..4])).* = len;
-
             // Start writing compressed data, skip some bytes for saving bit_widths later on
-            // 4 is for the length, 1 is for the byte_width of remainder data, rest is for
+            // 1 is for the byte_width of remainder data, rest is for
             // byte widths of whole blocks.
-            const byte_offset = 4 + 1 + n_whole_blocks;
+            const byte_offset = 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
             const out_t_len = 1024 * n_whole_blocks + n_remainder;
@@ -100,7 +123,7 @@ fn Unsigned(comptime T: type) type {
                 const max = std.mem.max(T, input[0..n_remainder]);
                 const width = needed_width(max);
 
-                output[4] = width;
+                output[0] = width;
 
                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
                 const n_written = SPack.bitpack(
@@ -114,7 +137,7 @@ fn Unsigned(comptime T: type) type {
                 std.debug.assert(n_written == remainder_packed_len);
                 offset += remainder_packed_len;
             } else {
-                output[4] = 0;
+                output[0] = 0;
             }
 
             // Write whole blocks
@@ -125,7 +148,7 @@ fn Unsigned(comptime T: type) type {
                 const max = max1024(block);
                 const width = needed_width(max);
 
-                output[5 + block_idx] = width;
+                output[1 + block_idx] = width;
 
                 offset += FL.dyn_bit_pack(block, out[offset..], width);
             }
@@ -142,21 +165,16 @@ fn Unsigned(comptime T: type) type {
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            if (input.len < 4 + 1 + n_whole_blocks) {
+            if (input.len < 1 + n_whole_blocks) {
                 return Error.InvalidInput;
             }
 
-            const out_len: u32 = @as(*align(1) const u32, @ptrCast(input[0..4])).*;
-            if (len != out_len) {
-                return Error.InvalidInput;
-            }
-
-            const remainder_width = input[4];
+            const remainder_width = input[0];
             if (remainder_width > N_BITS) {
                 return Error.InvalidInput;
             }
 
-            const block_widths = input[5 .. 5 + n_whole_blocks];
+            const block_widths = input[1 .. 1 + n_whole_blocks];
 
             const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
             var total_packed_len = remainder_packed_len;
@@ -169,7 +187,7 @@ fn Unsigned(comptime T: type) type {
                 total_packed_len += @as(u64, w) * 1024 / N_BITS;
             }
 
-            const data_section_byte_offset = 4 + 1 + n_whole_blocks;
+            const data_section_byte_offset = 1 + n_whole_blocks;
 
             const data_section_bytes = input[data_section_byte_offset..];
             if (data_section_bytes.len != total_packed_len * N_BYTES) {
@@ -195,7 +213,7 @@ fn Unsigned(comptime T: type) type {
 
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
-                const width = input[5 + block_idx];
+                const width = block_widths[block_idx];
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
 
@@ -223,13 +241,12 @@ fn Unsigned(comptime T: type) type {
             const max_block_size = N_BYTES * (1024 + 1);
 
             // Layout of the output is:
-            // - input length
             // - remainder values bit_width(u8)
             // - bit_width(u8) per block
             // - packed remainder values, a reference value before the packed values
             // - packed full blocks, a reference value before every block
 
-            return @sizeOf(u32) + 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
+            return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
         }
 
         /// Compress the input integers into the output buffer.
@@ -250,13 +267,10 @@ fn Unsigned(comptime T: type) type {
                 return Error.InvalidInput;
             }
 
-            // write input.length
-            @as(*align(1) u32, @ptrCast(output[0..4])).* = len;
-
             // Start writing compressed data, skip some bytes for saving bit_widths later on
-            // 4 is for the length, 1 is for the byte_width of remainder data, rest is for
+            // 1 is for the byte_width of remainder data, rest is for
             // byte widths of whole blocks.
-            const byte_offset = 4 + 1 + n_whole_blocks;
+            const byte_offset = 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
             const out_t_len = (1024 + 1) * n_whole_blocks + 1 + n_remainder;
@@ -272,7 +286,7 @@ fn Unsigned(comptime T: type) type {
                 const min, const max = std.mem.minMax(T, input[0..n_remainder]);
                 const width = needed_width(max - min);
 
-                output[4] = width;
+                output[0] = width;
 
                 out[0] = min;
                 offset += 1;
@@ -292,7 +306,7 @@ fn Unsigned(comptime T: type) type {
                 out[offset] = 0;
                 offset += 1;
 
-                output[4] = 0;
+                output[0] = 0;
             }
 
             // Write whole blocks
@@ -303,7 +317,7 @@ fn Unsigned(comptime T: type) type {
                 const min, const max = minmax1024(block);
                 const width = needed_width(max - min);
 
-                output[5 + block_idx] = width;
+                output[1 + block_idx] = width;
 
                 out[offset] = min;
                 offset += 1;
@@ -323,21 +337,16 @@ fn Unsigned(comptime T: type) type {
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            if (input.len < 4 + 1 + n_whole_blocks) {
+            if (input.len < 1 + n_whole_blocks) {
                 return Error.InvalidInput;
             }
 
-            const out_len: u32 = @as(*align(1) const u32, @ptrCast(input[0..4])).*;
-            if (len != out_len) {
-                return Error.InvalidInput;
-            }
-
-            const remainder_width = input[4];
+            const remainder_width = input[0];
             if (remainder_width > N_BITS) {
                 return Error.InvalidInput;
             }
 
-            const block_widths = input[5 .. 5 + n_whole_blocks];
+            const block_widths = input[1 .. 1 + n_whole_blocks];
 
             const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
             var total_packed_len = remainder_packed_len + 1;
@@ -350,7 +359,7 @@ fn Unsigned(comptime T: type) type {
                 total_packed_len += @as(u64, w) * 1024 / N_BITS + 1;
             }
 
-            const data_section_byte_offset = 4 + 1 + n_whole_blocks;
+            const data_section_byte_offset = 1 + n_whole_blocks;
 
             const data_section_bytes = input[data_section_byte_offset..];
             if (data_section_bytes.len != total_packed_len * N_BYTES) {
@@ -382,7 +391,7 @@ fn Unsigned(comptime T: type) type {
 
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
-                const width = input[5 + block_idx];
+                const width = block_widths[block_idx];
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
 
@@ -413,13 +422,12 @@ fn Unsigned(comptime T: type) type {
             const max_block_size = N_BYTES * (FL.N_LANES + 1024);
 
             // Layout of the output is:
-            // - input length
             // - remainder values bit_width(u8)
             // - bit_width(u8) per block
             // - packed remainder values, a base value before the values
             // - packed full blocks, N_LANES "bases" T before each block
 
-            return @sizeOf(u32) + 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
+            return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
         }
 
         /// Compress the input integers into the output buffer.
@@ -447,13 +455,10 @@ fn Unsigned(comptime T: type) type {
                 return Error.InvalidInput;
             }
 
-            // write input.length
-            @as(*align(1) u32, @ptrCast(output[0..4])).* = len;
-
             // Start writing compressed data, skip some bytes for saving bit_widths later on
-            // 4 is for the length, 1 is for the byte_width of remainder data, rest is for
+            // 1 is for the byte_width of remainder data, rest is for
             // byte widths of whole blocks.
-            const byte_offset = 4 + 1 + n_whole_blocks;
+            const byte_offset = 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
             const out_t_len = (FL.N_LANES + 1024) * n_whole_blocks + 1 + n_remainder;
@@ -477,7 +482,7 @@ fn Unsigned(comptime T: type) type {
                 }
                 const width = needed_width(max_delta);
 
-                output[4] = width;
+                output[0] = width;
 
                 out[offset] = base;
                 offset += 1;
@@ -494,7 +499,7 @@ fn Unsigned(comptime T: type) type {
                 std.debug.assert(n_written == remainder_packed_len);
                 offset += remainder_packed_len;
             } else {
-                output[4] = 0;
+                output[0] = 0;
 
                 out[offset] = 0;
                 offset += 1;
@@ -514,7 +519,7 @@ fn Unsigned(comptime T: type) type {
                 const max = max1024(delta);
                 const width = needed_width(max);
 
-                output[5 + block_idx] = width;
+                output[1 + block_idx] = width;
 
                 for (0..FL.N_LANES) |i| {
                     out[offset + i] = bases[i];
@@ -536,21 +541,16 @@ fn Unsigned(comptime T: type) type {
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            if (input.len < 4 + 1 + n_whole_blocks) {
+            if (input.len < 1 + n_whole_blocks) {
                 return Error.InvalidInput;
             }
 
-            const out_len: u32 = @as(*align(1) const u32, @ptrCast(input[0..4])).*;
-            if (len != out_len) {
-                return Error.InvalidInput;
-            }
-
-            const remainder_width = input[4];
+            const remainder_width = input[0];
             if (remainder_width > N_BITS) {
                 return Error.InvalidInput;
             }
 
-            const block_widths = input[5 .. 5 + n_whole_blocks];
+            const block_widths = input[1 .. 1 + n_whole_blocks];
 
             const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
             var total_packed_len = remainder_packed_len + 1;
@@ -563,7 +563,7 @@ fn Unsigned(comptime T: type) type {
                 total_packed_len += @as(u64, w) * 1024 / N_BITS + FL.N_LANES;
             }
 
-            const data_section_byte_offset = 4 + 1 + n_whole_blocks;
+            const data_section_byte_offset = 1 + n_whole_blocks;
 
             const data_section_bytes = input[data_section_byte_offset..];
             if (data_section_bytes.len != total_packed_len * N_BYTES) {
@@ -594,7 +594,7 @@ fn Unsigned(comptime T: type) type {
 
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
-                const width = input[5 + block_idx];
+                const width = block_widths[block_idx];
 
                 const bases_p = data_section[offset..];
                 const bases: *align(1) const [FL.N_LANES]T = bases_p[0..FL.N_LANES];
