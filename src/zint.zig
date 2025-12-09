@@ -443,210 +443,240 @@ fn Basic(comptime T: type) type {
             return;
         }
 
-        // /// Returns the number of BYTES needed on the output buffer for compressing
-        // /// `len` elements. The compression will likely end up writing less data
-        // /// but this is needed to make sure the compression will succeed.
-        // fn delta_compress_bound(len: u32) u32 {
-        //     const n_blocks = len / 1024;
-        //     const n_remainder = len % 1024;
+        /// Returns the number of BYTES needed on the output buffer for compressing
+        /// `len` elements. The compression will likely end up writing less data
+        /// but this is needed to make sure the compression will succeed.
+        fn delta_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
 
-        //     const max_block_size = N_BYTES * (FL.N_LANES + 1024);
+            const max_block_size = N_BYTES * (FL.N_LANES + 1024);
 
-        //     // Layout of the output is:
-        //     // - remainder values bit_width(u8)
-        //     // - bit_width(u8) per block
-        //     // - packed remainder values, a base value before the values
-        //     // - packed full blocks, N_LANES "bases" T before each block
+            // Layout of the output is:
+            // - remainder values bit_width(u8)
+            // - bit_width(u8) per block
+            // - packed remainder values, a base value before the values
+            // - packed full blocks, N_LANES "bases" T before each block
 
-        //     return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
-        // }
+            return 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
+        }
 
-        // /// Compress the input integers into the output buffer.
-        // /// `output` should be at least `delta_compress_bound(input.len)` BYTES.
-        // ///
-        // /// `transposed` and `delta` inputs are for using as internal scratch memory.
-        // ///
-        // /// Returns the number of bytes written to the output.
-        // fn delta_compress(
-        //     noalias transposed: *[1024]T,
-        //     noalias delta: *[1024]T,
-        //     noalias input: []const T,
-        //     noalias output: []u8,
-        // ) Error!usize {
-        //     if (input.len > std.math.maxInt(u32)) {
-        //         return Error.InvalidInput;
-        //     }
-        //     const len: u32 = @intCast(input.len);
+        /// Compress the input integers into the output buffer.
+        /// `output` should be at least `delta_compress_bound(input.len)` BYTES.
+        ///
+        /// `transposed` and `delta` inputs are for using as internal scratch memory.
+        ///
+        /// Returns the number of bytes written to the output.
+        fn delta_compress(
+            noalias transposed: *[1024]T,
+            noalias delta: *[1024]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
 
-        //     const n_whole_blocks = len / 1024;
-        //     const n_remainder = len % 1024;
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
 
-        //     const output_bound = delta_compress_bound(len);
-        //     if (output.len < output_bound) {
-        //         return Error.InvalidInput;
-        //     }
+            const output_bound = delta_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
 
-        //     // Start writing compressed data, skip some bytes for saving bit_widths later on
-        //     // 1 is for the byte_width of remainder data, rest is for
-        //     // byte widths of whole blocks.
-        //     const byte_offset = 1 + n_whole_blocks;
+            // Start writing compressed data, skip some bytes for saving bit_widths later on
+            // 1 is for the byte_width of remainder data, rest is for
+            // byte widths of whole blocks.
+            const byte_offset = 1 + n_whole_blocks;
 
-        //     // We should have this much capacity even though we will write less
-        //     const out_t_len = (FL.N_LANES + 1024) * n_whole_blocks + 1 + n_remainder;
+            // We should have this much capacity even though we will write less
+            const out_t_len = (FL.N_LANES + 1024) * n_whole_blocks + 1 + n_remainder;
 
-        //     const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
-        //     std.debug.assert(out.len == out_t_len);
+            const out: []align(1) U = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
+            std.debug.assert(out.len == out_t_len);
 
-        //     // number of T written so far, NOT number of bytes
-        //     var offset: usize = 0;
+            // number of T written so far, NOT number of bytes
+            var offset: usize = 0;
 
-        //     // write remainder data
-        //     if (n_remainder > 0) {
-        //         const base = input[0];
+            // write remainder data
+            if (n_remainder > 0) {
+                // use the delta buffer for zigzag
+                const scratch = delta;
+                const remainder_data = load_remainder(input[0..n_remainder], scratch[0..n_remainder]);
 
-        //         var prev = base;
-        //         var max_delta: T = 0;
-        //         for (input[0..n_remainder]) |v| {
-        //             const d = v -% prev;
-        //             max_delta = @max(max_delta, d);
-        //             prev = v;
-        //         }
-        //         const width = needed_width(max_delta);
+                const base = remainder_data[0];
 
-        //         output[0] = width;
+                var prev: U = base;
+                var max_delta: U = 0;
+                for (remainder_data) |v| {
+                    const d = v -% prev;
+                    max_delta = @max(max_delta, d);
+                    prev = v;
+                }
+                const width = needed_width(max_delta);
 
-        //         out[offset] = base;
-        //         offset += 1;
+                output[0] = width;
 
-        //         const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
-        //         const n_written = SPack.delta_bitpack(
-        //             base,
-        //             input[0..n_remainder],
-        //             out[offset..],
-        //             width,
-        //         ) catch {
-        //             @panic("failed scalar pack, this should never happen");
-        //         };
-        //         std.debug.assert(n_written == remainder_packed_len);
-        //         offset += remainder_packed_len;
-        //     } else {
-        //         output[0] = 0;
+                out[offset] = base;
+                offset += 1;
 
-        //         out[offset] = 0;
-        //         offset += 1;
-        //     }
+                const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
+                const n_written = SPack.delta_bitpack(
+                    base,
+                    remainder_data,
+                    out[offset..],
+                    width,
+                ) catch {
+                    @panic("failed scalar pack, this should never happen");
+                };
+                std.debug.assert(n_written == remainder_packed_len);
+                offset += remainder_packed_len;
+            } else {
+                output[0] = 0;
 
-        //     // Write whole blocks
-        //     const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
-        //     for (0..n_whole_blocks) |block_idx| {
-        //         const block: *const [1024]T = &input_blocks[block_idx];
+                out[offset] = 0;
+                offset += 1;
+            }
 
-        //         FL.transpose(block, transposed);
+            // Write whole blocks
+            const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (0..n_whole_blocks) |block_idx| {
+                // use delta for doing zigzag
+                // can't use transpose for it because we will write from the zigzag buffer into
+                // transpose
+                const block = load_block(&input_blocks[block_idx], delta);
 
-        //         const bases: *const [FL.N_LANES]T = transposed[0..FL.N_LANES];
+                const transposed_buf: *[1024]U = @ptrCast(transposed);
+                const delta_buf: *[1024]U = @ptrCast(delta);
 
-        //         FL.delta(transposed, bases, delta);
+                FL.transpose(block, transposed_buf);
 
-        //         const max = max1024(delta);
-        //         const width = needed_width(max);
+                const bases: *const [FL.N_LANES]U = transposed_buf[0..FL.N_LANES];
 
-        //         output[1 + block_idx] = width;
+                FL.delta(transposed_buf, bases, delta_buf);
 
-        //         for (0..FL.N_LANES) |i| {
-        //             out[offset + i] = bases[i];
-        //         }
-        //         offset += FL.N_LANES;
+                const max = max1024(delta_buf);
+                const width = needed_width(max);
 
-        //         offset += FL.dyn_bit_pack(delta, out[offset..], width);
-        //     }
+                output[1 + block_idx] = width;
 
-        //     return byte_offset + N_BYTES * offset;
-        // }
+                for (0..FL.N_LANES) |i| {
+                    out[offset + i] = bases[i];
+                }
+                offset += FL.N_LANES;
 
-        // fn delta_decompress(noalias transposed: *[1024]T, noalias input: []const u8, noalias output: []T) Error!void {
-        //     if (output.len > std.math.maxInt(u32)) {
-        //         return Error.InvalidInput;
-        //     }
-        //     const len: u32 = @intCast(output.len);
+                offset += FL.dyn_bit_pack(delta_buf, out[offset..], width);
+            }
 
-        //     const n_whole_blocks = len / 1024;
-        //     const n_remainder = len % 1024;
+            return byte_offset + N_BYTES * offset;
+        }
 
-        //     if (input.len < 1 + n_whole_blocks) {
-        //         return Error.InvalidInput;
-        //     }
+        fn delta_decompress(noalias scratch: *[1024]T, noalias transposed: *[1024]T, noalias input: []const u8, noalias output: []T) Error!void {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
 
-        //     const remainder_width = input[0];
-        //     if (remainder_width > N_BITS) {
-        //         return Error.InvalidInput;
-        //     }
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
 
-        //     const block_widths = input[1 .. 1 + n_whole_blocks];
+            if (input.len < 1 + n_whole_blocks) {
+                return Error.InvalidInput;
+            }
 
-        //     const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
-        //     var total_packed_len = remainder_packed_len + 1;
-        //     for (block_widths) |w| {
-        //         if (w > N_BITS) {
-        //             return Error.InvalidInput;
-        //         }
-        //     }
-        //     for (block_widths) |w| {
-        //         total_packed_len += @as(u64, w) * 1024 / N_BITS + FL.N_LANES;
-        //     }
+            const remainder_width = input[0];
+            if (remainder_width > N_BITS) {
+                return Error.InvalidInput;
+            }
 
-        //     const data_section_byte_offset = 1 + n_whole_blocks;
+            const block_widths = input[1 .. 1 + n_whole_blocks];
 
-        //     const data_section_bytes = input[data_section_byte_offset..];
-        //     if (data_section_bytes.len != total_packed_len * N_BYTES) {
-        //         return Error.InvalidInput;
-        //     }
+            const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
+            var total_packed_len = remainder_packed_len + 1;
+            for (block_widths) |w| {
+                if (w > N_BITS) {
+                    return Error.InvalidInput;
+                }
+            }
+            for (block_widths) |w| {
+                total_packed_len += @as(u64, w) * 1024 / N_BITS + FL.N_LANES;
+            }
 
-        //     const data_section: []align(1) const T = @ptrCast(data_section_bytes);
+            const data_section_byte_offset = 1 + n_whole_blocks;
 
-        //     // number of T read so far, NOT number of bytes
-        //     var offset: usize = 0;
+            const data_section_bytes = input[data_section_byte_offset..];
+            if (data_section_bytes.len != total_packed_len * N_BYTES) {
+                return Error.InvalidInput;
+            }
 
-        //     // read remainder data
-        //     if (n_remainder > 0) {
-        //         const base = data_section[0];
-        //         offset += 1;
+            const data_section: []align(1) const U = @ptrCast(data_section_bytes);
 
-        //         const n_read = try SPack.delta_unpack(
-        //             base,
-        //             data_section[offset .. offset + remainder_packed_len],
-        //             output[0..n_remainder],
-        //             remainder_width,
-        //         );
-        //         std.debug.assert(n_read == remainder_packed_len);
-        //         offset += remainder_packed_len;
-        //     } else {
-        //         offset += 1;
-        //     }
+            // number of T read so far, NOT number of bytes
+            var offset: usize = 0;
 
-        //     // Read whole blocks
-        //     for (0..n_whole_blocks) |block_idx| {
-        //         const width = block_widths[block_idx];
+            // read remainder data
+            if (n_remainder > 0) {
+                const base = data_section[0];
+                offset += 1;
 
-        //         const bases_p = data_section[offset..];
-        //         const bases: *align(1) const [FL.N_LANES]T = bases_p[0..FL.N_LANES];
-        //         offset += FL.N_LANES;
+                if (IS_SIGNED) {
+                    const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
+                    const n_read = try SPack.delta_unpack(
+                        base,
+                        data_section[offset .. offset + remainder_packed_len],
+                        zigzagged,
+                        remainder_width,
+                    );
+                    std.debug.assert(n_read == remainder_packed_len);
+                    ZigZag(T).decode(zigzagged, output[0..n_remainder]);
+                } else {
+                    const n_read = try SPack.delta_unpack(
+                        base,
+                        data_section[offset .. offset + remainder_packed_len],
+                        output[0..n_remainder],
+                        remainder_width,
+                    );
+                    std.debug.assert(n_read == remainder_packed_len);
+                }
+                offset += remainder_packed_len;
+            } else {
+                offset += 1;
+            }
 
-        //         offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed, width);
+            // Read whole blocks
+            for (0..n_whole_blocks) |block_idx| {
+                const width = block_widths[block_idx];
 
-        //         const out_offset = output[block_idx * 1024 + n_remainder ..];
-        //         FL.untranspose(transposed, out_offset[0..1024]);
-        //     }
+                const bases_p = data_section[offset..];
+                const bases: *align(1) const [FL.N_LANES]U = bases_p[0..FL.N_LANES];
+                offset += FL.N_LANES;
 
-        //     std.debug.assert(offset == total_packed_len);
-        //     std.debug.assert(offset == data_section.len);
+                const transposed_buf: *[1024]U = @ptrCast(transposed);
 
-        //     const end = data_section_byte_offset + @sizeOf(T) * offset;
-        //     if (end != input.len) {
-        //         return Error.InvalidInput;
-        //     }
+                const out_offset = output[block_idx * 1024 + n_remainder ..];
+                if (IS_SIGNED) {
+                    const zigzagged: *[1024]U = @ptrCast(scratch);
+                    offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
+                    FL.untranspose(transposed_buf, zigzagged);
+                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
+                } else {
+                    offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
+                    FL.untranspose(transposed_buf, out_offset[0..1024]);
+                }
+            }
 
-        //     return;
-        // }
+            std.debug.assert(offset == total_packed_len);
+            std.debug.assert(offset == data_section.len);
+
+            const end = data_section_byte_offset + @sizeOf(T) * offset;
+            if (end != input.len) {
+                return Error.InvalidInput;
+            }
+
+            return;
+        }
 
         fn max1024(input: *const [1024]U) U {
             var m = input[0];
@@ -716,7 +746,7 @@ fn Test(comptime T: type) type {
                 return @max(
                     U.bitpack_compress_bound(MAX_NUM_INTS),
                     U.forpack_compress_bound(MAX_NUM_INTS),
-                    // U.delta_compress_bound(MAX_NUM_INTS),
+                    U.delta_compress_bound(MAX_NUM_INTS),
                 );
             }
 
@@ -821,37 +851,40 @@ fn Test(comptime T: type) type {
             try std.testing.fuzz(ctx, roundtrip_forpack, .{});
         }
 
-        // fn roundtrip_delta_pack(ctx: Context, input: []const u8) anyerror!void {
-        //     const in = read_input(ctx.input, input);
+        fn roundtrip_delta_pack(ctx: Context, input: []const u8) anyerror!void {
+            const in = read_input(ctx.input, input);
 
-        //     var transposed: [1024]T = undefined;
-        //     var delta: [1024]T = undefined;
+            var transposed: [1024]T = undefined;
+            var delta: [1024]T = undefined;
 
-        //     const compressed_len = try U.delta_compress(
-        //         &transposed,
-        //         &delta,
-        //         in,
-        //         ctx.compressed,
-        //     );
+            const compressed_len = try U.delta_compress(
+                &transposed,
+                &delta,
+                in,
+                ctx.compressed,
+            );
 
-        //     std.debug.assert(
-        //         compressed_len <= U.delta_compress_bound(MAX_NUM_INTS),
-        //     );
+            std.debug.assert(
+                compressed_len <= U.delta_compress_bound(MAX_NUM_INTS),
+            );
 
-        //     U.delta_decompress(
-        //         &transposed,
-        //         ctx.compressed[0..compressed_len],
-        //         ctx.output[0..in.len],
-        //     ) catch unreachable;
+            var scratch: [1024]T = undefined;
 
-        //     try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
-        // }
+            U.delta_decompress(
+                &scratch,
+                &transposed,
+                ctx.compressed[0..compressed_len],
+                ctx.output[0..in.len],
+            ) catch unreachable;
 
-        // test roundtrip_delta_pack {
-        //     var ctx = Context.init();
-        //     defer ctx.deinit();
-        //     try std.testing.fuzz(ctx, roundtrip_delta_pack, .{});
-        // }
+            try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
+        }
+
+        test roundtrip_delta_pack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx, roundtrip_delta_pack, .{});
+        }
 
         fn garbage_bitpack(ctx: []T, input: []const u8) anyerror!void {
             const output = ctx;
@@ -893,25 +926,26 @@ fn Test(comptime T: type) type {
             try std.testing.fuzz(ctx.input, garbage_forpack, .{});
         }
 
-        // fn garbage_delta_pack(ctx: []T, input: []const u8) anyerror!void {
-        //     const output = ctx;
+        fn garbage_delta_pack(ctx: []T, input: []const u8) anyerror!void {
+            const output = ctx;
 
-        //     var transposed: [1024]T = undefined;
+            var transposed: [1024]T = undefined;
+            var scratch: [1024]T = undefined;
 
-        //     if (input.len < 4) {
-        //         U.delta_decompress(&transposed, input, output) catch return;
-        //     } else {
-        //         const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
-        //         const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
-        //         U.delta_decompress(&transposed, input[4..], output[0..num_ints]) catch return;
-        //     }
-        // }
+            if (input.len < 4) {
+                U.delta_decompress(&scratch, &transposed, input, output) catch return;
+            } else {
+                const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
+                const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
+                U.delta_decompress(&scratch, &transposed, input[4..], output[0..num_ints]) catch return;
+            }
+        }
 
-        // test garbage_delta_pack {
-        //     var ctx = Context.init();
-        //     defer ctx.deinit();
-        //     try std.testing.fuzz(ctx.input, garbage_delta_pack, .{});
-        // }
+        test garbage_delta_pack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx.input, garbage_delta_pack, .{});
+        }
     };
 }
 
