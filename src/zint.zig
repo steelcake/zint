@@ -17,7 +17,140 @@ const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
 pub const Error = error{InvalidInput};
 
-fn Basic(comptime T: type) type {
+fn Impl128(comptime T: type) type {
+    const I = switch (T) {
+        i128 => i64,
+        u128 => u64,
+        else => @compileError("unexpected type"),
+    };
+
+    const N_BYTES = @sizeOf(T);
+
+    const Inner = Impl(I);
+
+    return struct {
+        fn bitpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // We will compress the two blocks together as they won't effect each other.
+            const size_per_block = Inner.bitpack_compress_bound(2048);
+
+            // We will make two seperate calls to compress the remainder
+            const size_for_remainder = 2 * Inner.bitpack_compress_bound(n_remainder);
+
+            return n_blocks * size_per_block + size_for_remainder;
+        }
+
+        fn bitpack_compress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[512]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
+
+            const n_remainder = len % 1024;
+
+            const output_bound = bitpack_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes written so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            // write remainder data
+            if (n_remainder > 0) {
+                split(input[0..n_remainder], split_a[0..n_remainder], split_b[0..n_remainder]);
+
+                offset += try Inner.bitpack_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.bitpack_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
+            }
+
+            const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (blocks) |*block| {
+                split(block, split_a, split_b);
+                offset += try Inner.bitpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+            }
+
+            return offset;
+        }
+
+        fn bitpack_decompress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[512]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            if (input.len < 1 + n_whole_blocks) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes read so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            if (n_remainder > 0) {}
+        }
+
+        fn combine1024(noalias a: *const [1024]I, noalias b: *const [1024]I, noalias output: *[1024]T) void {
+            const out: *[1024][2]I = @ptrCast(output);
+            for (0..1024) |i| {
+                out[i] = .{ a[i], b[i] };
+            }
+        }
+
+        fn combine(noalias a: []const I, noalias b: []const I, noalias output: []T) void {
+            std.debug.assert(output.len == a.len);
+            std.debug.assert(output.len == b.len);
+
+            const out: [][2]I = @ptrCast(output);
+            for (out, a, b) |*o, a_, b_| {
+                o.* = .{ a_, b_ };
+            }
+        }
+
+        fn split1024(noalias input: *const [1024]T, noalias a: *[1024]I, noalias b: *[1024]I) void {
+            for (0..1024) |i| {
+                const v: [2]I = @bitCast(input[i]);
+                a[i] = v[0];
+                b[i] = v[1];
+            }
+        }
+
+        fn split(noalias input: []const T, noalias a: []I, noalias b: []I) void {
+            std.debug.assert(input.len == a.len);
+            std.debug.assert(input.len == b.len);
+
+            for (input, a, b) |i, *a_, *b_| {
+                const v: [2]I = @bitCast(i);
+                a_.* = v[0];
+                b_.* = v[1];
+            }
+        }
+    };
+}
+
+fn Impl(comptime T: type) type {
     const U = switch (T) {
         u8, u16, u32, u64 => T,
         i8 => u8,
@@ -129,7 +262,8 @@ fn Basic(comptime T: type) type {
             return byte_offset + N_BYTES * offset;
         }
 
-        fn bitpack_decompress(noalias scratch: *[1024]T, noalias input: []const u8, noalias output: []T) Error!void {
+        /// Returns the number of bytes decompressed from the `input`
+        fn bitpack_decompress(noalias scratch: *[1024]T, noalias input: []const u8, noalias output: []T) Error!usize {
             if (output.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -221,12 +355,7 @@ fn Basic(comptime T: type) type {
             std.debug.assert(offset == total_packed_len);
             std.debug.assert(offset == data_section.len);
 
-            const end = data_section_byte_offset + @sizeOf(T) * offset;
-            if (end != input.len) {
-                return Error.InvalidInput;
-            }
-
-            return;
+            return data_section_byte_offset + @sizeOf(T) * offset;
         }
 
         /// Returns the number of BYTES needed on the output buffer for compressing
@@ -328,11 +457,12 @@ fn Basic(comptime T: type) type {
             return byte_offset + N_BYTES * offset;
         }
 
+        /// Returns the number of bytes decompressed from the `input`
         fn forpack_decompress(
             noalias scratch: *[1024]T,
             noalias input: []const u8,
             noalias output: []T,
-        ) Error!void {
+        ) Error!usize {
             if (output.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -435,12 +565,7 @@ fn Basic(comptime T: type) type {
             std.debug.assert(offset == total_packed_len);
             std.debug.assert(offset == data_section.len);
 
-            const end = data_section_byte_offset + @sizeOf(T) * offset;
-            if (end != input.len) {
-                return Error.InvalidInput;
-            }
-
-            return;
+            return data_section_byte_offset + @sizeOf(T) * offset;
         }
 
         /// Returns the number of BYTES needed on the output buffer for compressing
@@ -573,7 +698,13 @@ fn Basic(comptime T: type) type {
             return byte_offset + N_BYTES * offset;
         }
 
-        fn delta_decompress(noalias scratch: *[1024]T, noalias transposed: *[1024]T, noalias input: []const u8, noalias output: []T) Error!void {
+        /// Returns the number of bytes decompressed from the `input`
+        fn delta_decompress(
+            noalias scratch: *[1024]T,
+            noalias transposed: *[1024]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
             if (output.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -670,12 +801,7 @@ fn Basic(comptime T: type) type {
             std.debug.assert(offset == total_packed_len);
             std.debug.assert(offset == data_section.len);
 
-            const end = data_section_byte_offset + @sizeOf(T) * offset;
-            if (end != input.len) {
-                return Error.InvalidInput;
-            }
-
-            return;
+            return data_section_byte_offset + @sizeOf(T) * offset;
         }
 
         fn max1024(input: *const [1024]U) U {
@@ -733,7 +859,7 @@ fn Test(comptime T: type) type {
     return struct {
         const MAX_NUM_INTS = 123321;
 
-        const U = Basic(T);
+        const U = Impl(T);
 
         const Context = struct {
             const page_allocator = std.heap.page_allocator;
@@ -806,11 +932,13 @@ fn Test(comptime T: type) type {
                 compressed_len <= U.bitpack_compress_bound(MAX_NUM_INTS),
             );
 
-            U.bitpack_decompress(
+            const n_decompress = U.bitpack_decompress(
                 &scratch,
                 ctx.compressed[0..compressed_len],
                 ctx.output[0..in.len],
             ) catch unreachable;
+
+            try std.testing.expectEqual(n_decompress, compressed_len);
 
             try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
         }
@@ -836,11 +964,13 @@ fn Test(comptime T: type) type {
                 compressed_len <= U.forpack_compress_bound(MAX_NUM_INTS),
             );
 
-            U.forpack_decompress(
+            const n_decompress = U.forpack_decompress(
                 &scratch,
                 ctx.compressed[0..compressed_len],
                 ctx.output[0..in.len],
             ) catch unreachable;
+
+            try std.testing.expectEqual(n_decompress, compressed_len);
 
             try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
         }
@@ -870,12 +1000,14 @@ fn Test(comptime T: type) type {
 
             var scratch: [1024]T = undefined;
 
-            U.delta_decompress(
+            const n_decompress = U.delta_decompress(
                 &scratch,
                 &transposed,
                 ctx.compressed[0..compressed_len],
                 ctx.output[0..in.len],
             ) catch unreachable;
+
+            try std.testing.expectEqual(n_decompress, compressed_len);
 
             try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
         }
