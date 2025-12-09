@@ -18,7 +18,7 @@ const Zint = zint.Zint;
 const Ctx = zint.Ctx;
 
 const ctx = try Ctx.init(std.heap.page_allocator);
-defer Ctx.deinit(std.heap.page_allocator);
+defer ctx.deinit(std.heap.page_allocator);
 
 const compress_buf = try std.heap.page_allocator.alloc(u8, Z.bitpack_compress_bound(input.len));
 
