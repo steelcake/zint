@@ -35,6 +35,7 @@ pub fn Zint(comptime T: type) type {
         pub fn bitpack_compress_bound(len: u32) u32 {
             return switch (T) {
                 i128, u128 => Impl128(T).bitpack_compress_bound(len),
+                i256, u256 => Impl256(T).bitpack_compress_bound(len),
                 else => Impl(T).bitpack_compress_bound(len),
             };
         }
@@ -50,6 +51,12 @@ pub fn Zint(comptime T: type) type {
                 i128, u128 => Impl128(T).bitpack_compress(
                     buf[0..1024],
                     buf[1024..1536],
+                    input,
+                    output,
+                ),
+                i256, u256 => Impl256(T).bitpack_compress(
+                    buf[0..1024],
+                    buf[1024..1280],
                     input,
                     output,
                 ),
@@ -75,6 +82,12 @@ pub fn Zint(comptime T: type) type {
                     input,
                     output,
                 ),
+                i256, u256 => Impl256(T).bitpack_decompress(
+                    buf[0..1024],
+                    buf[1024..1280],
+                    input,
+                    output,
+                ),
                 else => Impl(T).bitpack_decompress(
                     buf[0..1024],
                     input,
@@ -86,6 +99,7 @@ pub fn Zint(comptime T: type) type {
         pub fn forpack_compress_bound(len: u32) u32 {
             return switch (T) {
                 i128, u128 => Impl128(T).forpack_compress_bound(len),
+                i256, u256 => Impl256(T).forpack_compress_bound(len),
                 else => Impl(T).forpack_compress_bound(len),
             };
         }
@@ -101,6 +115,12 @@ pub fn Zint(comptime T: type) type {
                 i128, u128 => Impl128(T).forpack_compress(
                     buf[0..1024],
                     buf[1024..1536],
+                    input,
+                    output,
+                ),
+                i256, u256 => Impl256(T).forpack_compress(
+                    buf[0..1024],
+                    buf[1024..1280],
                     input,
                     output,
                 ),
@@ -126,6 +146,12 @@ pub fn Zint(comptime T: type) type {
                     input,
                     output,
                 ),
+                i256, u256 => Impl256(T).forpack_decompress(
+                    buf[0..1024],
+                    buf[1024..1280],
+                    input,
+                    output,
+                ),
                 else => Impl(T).forpack_decompress(
                     buf[0..1024],
                     input,
@@ -137,6 +163,7 @@ pub fn Zint(comptime T: type) type {
         pub fn deltapack_compress_bound(len: u32) u32 {
             return switch (T) {
                 i128, u128 => Impl128(T).delta_compress_bound(len),
+                i256, u256 => Impl256(T).delta_compress_bound(len),
                 else => Impl(T).delta_compress_bound(len),
             };
         }
@@ -153,6 +180,13 @@ pub fn Zint(comptime T: type) type {
                     buf[0..1024],
                     buf[1024..1536],
                     buf[1536..2048],
+                    input,
+                    output,
+                ),
+                i256, u256 => Impl256(T).delta_compress(
+                    buf[0..1024],
+                    buf[1024..1280],
+                    buf[1280..1536],
                     input,
                     output,
                 ),
@@ -180,6 +214,13 @@ pub fn Zint(comptime T: type) type {
                     input,
                     output,
                 ),
+                i256, u256 => Impl256(T).delta_decompress(
+                    buf[0..1024],
+                    buf[1024..1280],
+                    buf[1280..1536],
+                    input,
+                    output,
+                ),
                 else => Impl(T).delta_decompress(
                     buf[0..1024],
                     buf[1024..2048],
@@ -187,6 +228,472 @@ pub fn Zint(comptime T: type) type {
                     output,
                 ),
             };
+        }
+    };
+}
+
+fn Impl256(comptime T: type) type {
+    const I = switch (T) {
+        i256 => i64,
+        u256 => u64,
+        else => @compileError("unexpected type"),
+    };
+
+    const Inner = Impl(I);
+
+    return struct {
+        fn bitpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // We will compress the four blocks together as they won't effect each other.
+            const size_per_block = Inner.bitpack_compress_bound(4096);
+
+            // We will make four seperate calls to compress the remainder
+            const size_for_remainder = 4 * Inner.bitpack_compress_bound(n_remainder);
+
+            return n_blocks * size_per_block + size_for_remainder;
+        }
+
+        fn bitpack_compress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[256]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
+
+            const n_remainder = len % 1024;
+
+            const output_bound = bitpack_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes written so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            // write remainder data
+            if (n_remainder > 0) {
+                split(
+                    input[0..n_remainder],
+                    split_a[0..n_remainder],
+                    split_b[0..n_remainder],
+                    split_c[0..n_remainder],
+                    split_d[0..n_remainder],
+                );
+
+                offset += try Inner.bitpack_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.bitpack_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
+                offset += try Inner.bitpack_compress(scratch_buf, split_c[0..n_remainder], output[offset..]);
+                offset += try Inner.bitpack_compress(scratch_buf, split_d[0..n_remainder], output[offset..]);
+            }
+
+            const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (blocks) |*block| {
+                split(block, split_a, split_b, split_c, split_d);
+                offset += try Inner.bitpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+            }
+
+            return offset;
+        }
+
+        fn bitpack_decompress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[256]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // number of bytes read so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            if (n_remainder > 0) {
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_b[0..n_remainder]);
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_c[0..n_remainder]);
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_d[0..n_remainder]);
+
+                combine(
+                    split_a[0..n_remainder],
+                    split_b[0..n_remainder],
+                    split_c[0..n_remainder],
+                    split_d[0..n_remainder],
+                    output[0..n_remainder],
+                );
+            }
+
+            for (0..n_whole_blocks) |block_idx| {
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_buf));
+
+                const out_offset = output[block_idx * 1024 + n_remainder ..];
+                combine(split_a, split_b, split_c, split_d, out_offset[0..1024]);
+            }
+
+            return offset;
+        }
+
+        fn forpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // We will compress the four blocks together as they won't effect each other.
+            const size_per_block = Inner.forpack_compress_bound(4096);
+
+            // We will make four seperate calls to compress the remainder
+            const size_for_remainder = 4 * Inner.forpack_compress_bound(n_remainder);
+
+            return n_blocks * size_per_block + size_for_remainder;
+        }
+
+        fn forpack_compress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[256]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
+
+            const n_remainder = len % 1024;
+
+            const output_bound = forpack_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes written so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            // write remainder data
+            if (n_remainder > 0) {
+                split(
+                    input[0..n_remainder],
+                    split_a[0..n_remainder],
+                    split_b[0..n_remainder],
+                    split_c[0..n_remainder],
+                    split_d[0..n_remainder],
+                );
+
+                offset += try Inner.forpack_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.forpack_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
+                offset += try Inner.forpack_compress(scratch_buf, split_c[0..n_remainder], output[offset..]);
+                offset += try Inner.forpack_compress(scratch_buf, split_d[0..n_remainder], output[offset..]);
+            }
+
+            const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (blocks) |*block| {
+                split(block, split_a, split_b, split_c, split_d);
+                offset += try Inner.forpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+            }
+
+            return offset;
+        }
+
+        fn forpack_decompress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[256]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // number of bytes read so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            if (n_remainder > 0) {
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_b[0..n_remainder]);
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_c[0..n_remainder]);
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_d[0..n_remainder]);
+
+                combine(
+                    split_a[0..n_remainder],
+                    split_b[0..n_remainder],
+                    split_c[0..n_remainder],
+                    split_d[0..n_remainder],
+                    output[0..n_remainder],
+                );
+            }
+
+            for (0..n_whole_blocks) |block_idx| {
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_buf));
+
+                const out_offset = output[block_idx * 1024 + n_remainder ..];
+                combine(
+                    split_a,
+                    split_b,
+                    split_c,
+                    split_d,
+                    out_offset[0..1024],
+                );
+            }
+
+            return offset;
+        }
+
+        fn delta_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // We will compress the four blocks together as they won't effect each other.
+            const size_per_block = Inner.delta_compress_bound(4096);
+
+            // We will make four seperate calls to compress the remainder
+            const size_for_remainder = 4 * Inner.delta_compress_bound(n_remainder);
+
+            return n_blocks * size_per_block + size_for_remainder;
+        }
+
+        fn delta_compress(
+            noalias split_buf: *[1024]T,
+            noalias transposed: *[256]T,
+            noalias delta: *[256]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
+
+            const n_remainder = len % 1024;
+
+            const output_bound = delta_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes written so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+
+            const transposed_buf: *[1024]I = @ptrCast(transposed);
+            const delta_buf: *[1024]I = @ptrCast(delta);
+
+            // write remainder data
+            if (n_remainder > 0) {
+                split(
+                    input[0..n_remainder],
+                    split_a[0..n_remainder],
+                    split_b[0..n_remainder],
+                    split_c[0..n_remainder],
+                    split_d[0..n_remainder],
+                );
+
+                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_b[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_c[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_d[0..n_remainder], output[offset..]);
+            }
+
+            const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (blocks) |*block| {
+                split(block, split_a, split_b, split_c, split_d);
+                offset += try Inner.delta_compress(transposed_buf, delta_buf, @ptrCast(split_buf), output[offset..]);
+            }
+
+            return offset;
+        }
+
+        fn delta_decompress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[256]T,
+            noalias transposed: *[256]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // number of bytes read so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const transposed_buf: *[1024]I = @ptrCast(transposed);
+
+            if (n_remainder > 0) {
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    split_a[0..n_remainder],
+                );
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    split_b[0..n_remainder],
+                );
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    split_c[0..n_remainder],
+                );
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    split_d[0..n_remainder],
+                );
+
+                combine(
+                    split_a[0..n_remainder],
+                    split_b[0..n_remainder],
+                    split_c[0..n_remainder],
+                    split_d[0..n_remainder],
+                    output[0..n_remainder],
+                );
+            }
+
+            for (0..n_whole_blocks) |block_idx| {
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    @ptrCast(split_buf),
+                );
+
+                const out_offset = output[block_idx * 1024 + n_remainder ..];
+                combine(
+                    split_a,
+                    split_b,
+                    split_c,
+                    split_d,
+                    out_offset[0..1024],
+                );
+            }
+
+            return offset;
+        }
+
+        fn combine1024(
+            noalias a: *const [1024]I,
+            noalias b: *const [1024]I,
+            noalias c: *const [1024]I,
+            noalias d: *const [1024]I,
+            noalias output: *[1024]T,
+        ) void {
+            const out: *[1024][4]I = @ptrCast(output);
+            for (0..1024) |i| {
+                out[i] = .{ a[i], b[i], c[i], d[i] };
+            }
+        }
+
+        fn combine(
+            noalias a: []const I,
+            noalias b: []const I,
+            noalias c: []const I,
+            noalias d: []const I,
+            noalias output: []T,
+        ) void {
+            std.debug.assert(output.len == a.len);
+            std.debug.assert(output.len == b.len);
+            std.debug.assert(output.len == c.len);
+            std.debug.assert(output.len == d.len);
+
+            const out: [][4]I = @ptrCast(output);
+            for (out, a, b, c, d) |*o, a_, b_, c_, d_| {
+                o.* = .{ a_, b_, c_, d_ };
+            }
+        }
+
+        fn split1024(
+            noalias input: *const [1024]T,
+            noalias a: *[1024]I,
+            noalias b: *[1024]I,
+            noalias c: *[1024]I,
+            noalias d: *[1024]I,
+        ) void {
+            for (0..1024) |i| {
+                const v: [4]I = @bitCast(input[i]);
+                a[i] = v[0];
+                b[i] = v[1];
+                c[i] = v[2];
+                d[i] = v[3];
+            }
+        }
+
+        fn split(
+            noalias input: []const T,
+            noalias a: []I,
+            noalias b: []I,
+            noalias c: []I,
+            noalias d: []I,
+        ) void {
+            std.debug.assert(input.len == a.len);
+            std.debug.assert(input.len == b.len);
+            std.debug.assert(input.len == c.len);
+            std.debug.assert(input.len == d.len);
+
+            for (input, a, b, c, d) |i, *a_, *b_, *c_, *d_| {
+                const v: [4]I = @bitCast(i);
+                a_.* = v[0];
+                b_.* = v[1];
+                c_.* = v[2];
+                d_.* = v[3];
+            }
         }
     };
 }
@@ -1474,4 +1981,7 @@ test {
 
     _ = Test(i128);
     _ = Test(u128);
+
+    _ = Test(i256);
+    _ = Test(u256);
 }
