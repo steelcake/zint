@@ -24,8 +24,6 @@ fn Impl128(comptime T: type) type {
         else => @compileError("unexpected type"),
     };
 
-    const N_BYTES = @sizeOf(T);
-
     const Inner = Impl(I);
 
     return struct {
@@ -109,7 +107,118 @@ fn Impl128(comptime T: type) type {
             const split_b: *[1024]I = @ptrCast(split_buf[512..]);
             const scratch_buf: *[1024]I = @ptrCast(scratch);
 
-            if (n_remainder > 0) {}
+            if (n_remainder > 0) {
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_b[0..n_remainder]);
+
+                combine(split_a[0..n_remainder], split_b[0..n_remainder], output[0..n_remainder]);
+            }
+
+            for (0..n_whole_blocks) |block_idx| {
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_buf));
+
+                const out_offset = output[block_idx * 1024 + n_remainder..];
+                combine(split_a, split_b, out_offset[0..1024]);
+            }
+
+            return offset;
+        }
+
+        fn forpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            // We will compress the two blocks together as they won't effect each other.
+            const size_per_block = Inner.forpack_compress_bound(2048);
+
+            // We will make two seperate calls to compress the remainder
+            const size_for_remainder = 2 * Inner.forpack_compress_bound(n_remainder);
+
+            return n_blocks * size_per_block + size_for_remainder;
+        }
+
+        fn forpack_compress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[512]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
+
+            const n_remainder = len % 1024;
+
+            const output_bound = forpack_compress_bound(len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes written so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            // write remainder data
+            if (n_remainder > 0) {
+                split(input[0..n_remainder], split_a[0..n_remainder], split_b[0..n_remainder]);
+
+                offset += try Inner.forpack_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.forpack_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
+            }
+
+            const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (blocks) |*block| {
+                split(block, split_a, split_b);
+                offset += try Inner.forpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+            }
+
+            return offset;
+        }
+
+        fn forpack_decompress(
+            noalias split_buf: *[1024]T,
+            noalias scratch: *[512]T,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            if (input.len < 1 + n_whole_blocks) {
+                return Error.InvalidInput;
+            }
+
+            // number of bytes read so far
+            var offset: usize = 0;
+
+            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *[1024]I = @ptrCast(scratch);
+
+            if (n_remainder > 0) {
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_b[0..n_remainder]);
+
+                combine(split_a[0..n_remainder], split_b[0..n_remainder], output[0..n_remainder]);
+            }
+
+            for (0..n_whole_blocks) |block_idx| {
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_buf));
+
+                const out_offset = output[block_idx * 1024 + n_remainder..];
+                combine(split_a, split_b, out_offset[0..1024]);
+            }
+
+            return offset;
         }
 
         fn combine1024(noalias a: *const [1024]I, noalias b: *const [1024]I, noalias output: *[1024]T) void {
@@ -1081,7 +1190,7 @@ fn Test(comptime T: type) type {
     };
 }
 
-test Basic {
+test {
     _ = Test(u8);
     _ = Test(u16);
     _ = Test(u32);
