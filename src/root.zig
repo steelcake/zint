@@ -15,8 +15,8 @@ pub const FastLanes = fastlanes.FastLanes;
 // pub const Zint = zint.Zint;
 
 test {
-    // _ = fastlanes;
-    // _ = zigzag;
-    // _ = scalar_bitpack;
+    _ = fastlanes;
+    _ = zigzag;
+    _ = scalar_bitpack;
     _ = zint;
 }

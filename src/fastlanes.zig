@@ -150,8 +150,8 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_undelta_pack(
-            noalias input: []const T,
-            noalias base: *const [N_LANES]T,
+            noalias input: []align(1) const T,
+            noalias base: *align(1) const [N_LANES]T,
             noalias output: *[1024]T,
             width: usize,
         ) usize {
@@ -343,8 +343,8 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn undelta_pack(
-                    noalias input: *const [PACKED_LEN]T,
-                    noalias base: *const [N_LANES]T,
+                    noalias input: *align(1) const [PACKED_LEN]T,
+                    noalias base: *align(1) const [N_LANES]T,
                     noalias output: *[1024]T,
                 ) void {
                     for (0..N_LANES) |lane| {

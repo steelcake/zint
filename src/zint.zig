@@ -87,7 +87,7 @@ fn Unsigned(comptime T: type) type {
             const byte_offset = 4 + 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
-            const out_t_len = 1024 * (n_whole_blocks + 1);
+            const out_t_len = 1024 * n_whole_blocks + n_remainder;
 
             const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
             std.debug.assert(out.len == out_t_len);
@@ -259,7 +259,7 @@ fn Unsigned(comptime T: type) type {
             const byte_offset = 4 + 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
-            const out_t_len = (1024 + 1) * (n_whole_blocks + 1);
+            const out_t_len = (1024 + 1) * n_whole_blocks + 1 + n_remainder;
 
             const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
             std.debug.assert(out.len == out_t_len);
@@ -442,7 +442,7 @@ fn Unsigned(comptime T: type) type {
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            const output_bound = delta_compress_bound(input.len);
+            const output_bound = delta_compress_bound(len);
             if (output.len < output_bound) {
                 return Error.InvalidInput;
             }
@@ -456,7 +456,7 @@ fn Unsigned(comptime T: type) type {
             const byte_offset = 4 + 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
-            const out_t_len = 1024 * (n_whole_blocks + 1);
+            const out_t_len = (FL.N_LANES + 1024) * n_whole_blocks + 1 + n_remainder;
 
             const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
             std.debug.assert(out.len == out_t_len);
@@ -469,9 +469,9 @@ fn Unsigned(comptime T: type) type {
                 const base = input[0];
 
                 var prev = base;
-                var max_delta = 0;
+                var max_delta: T = 0;
                 for (input[0..n_remainder]) |v| {
-                    const d = v - prev;
+                    const d = v -% prev;
                     max_delta = @max(max_delta, d);
                     prev = v;
                 }
@@ -495,6 +495,9 @@ fn Unsigned(comptime T: type) type {
                 offset += remainder_packed_len;
             } else {
                 output[4] = 0;
+
+                out[offset] = 0;
+                offset += 1;
             }
 
             // Write whole blocks
@@ -506,7 +509,7 @@ fn Unsigned(comptime T: type) type {
 
                 const bases: *const [FL.N_LANES]T = transposed[0..FL.N_LANES];
 
-                FL.delta(block, bases, delta);
+                FL.delta(transposed, bases, delta);
 
                 const max = max1024(delta);
                 const width = needed_width(max);
@@ -585,6 +588,8 @@ fn Unsigned(comptime T: type) type {
                 );
                 std.debug.assert(n_read == remainder_packed_len);
                 offset += remainder_packed_len;
+            } else {
+                offset += 1;
             }
 
             // Read whole blocks

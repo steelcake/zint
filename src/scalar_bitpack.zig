@@ -274,18 +274,17 @@ pub fn ScalarBitpack(comptime T: type) type {
 
             const mask = (@as(T, 1) << @intCast(bit_width)) - 1;
 
-            var prev = base;
-
             if (in_idx < input.len) {
-                prev +%= input[in_idx];
-                buffer = prev;
+                buffer = input[in_idx];
                 in_idx += 1;
                 bits_in_buffer = N_BITS;
             }
 
+            var prev = base;
             for (output) |*out_val| {
                 if (bits_in_buffer >= bit_width) {
-                    out_val.* = buffer & mask;
+                    prev +%= buffer & mask;
+                    out_val.* = prev;
 
                     buffer = buffer >> @intCast(bit_width);
                     bits_in_buffer -= bit_width;
@@ -295,14 +294,14 @@ pub fn ScalarBitpack(comptime T: type) type {
                     const bits_needed = bit_width - bits_taken;
 
                     if (in_idx >= input.len) unreachable;
-                    prev +%= input[in_idx];
-                    const next_word = prev;
+                    const next_word = input[in_idx];
                     in_idx += 1;
 
                     const high_mask = (@as(T, 1) << @intCast(bits_needed)) - 1;
                     const high_bits = next_word & high_mask;
 
-                    out_val.* = low_bits | (high_bits << @intCast(bits_taken));
+                    prev +%= low_bits | (high_bits << @intCast(bits_taken));
+                    out_val.* = prev;
 
                     buffer = next_word >> @intCast(bits_needed);
                     bits_in_buffer = N_BITS - bits_needed;
@@ -382,7 +381,7 @@ fn TestScalarBitpack(comptime T: type) type {
 
             const base = if (in.len == 0) 0 else in[0];
 
-            var max_delta = 0;
+            var max_delta: T = 0;
             var prev: T = base;
             for (in) |v| {
                 const delta = v -% prev;
