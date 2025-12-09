@@ -31,7 +31,7 @@ pub fn FastLanes(comptime T: type) type {
 
     return struct {
         const N_BITS = @sizeOf(T) * 8;
-        const N_LANES = 1024 / N_BITS;
+        pub const N_LANES = 1024 / N_BITS;
 
         fn mask(width: comptime_int) T {
             return (1 << width) - 1;

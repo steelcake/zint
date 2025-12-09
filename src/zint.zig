@@ -44,8 +44,10 @@ fn Unsigned(comptime T: type) type {
         /// Returns the number of BYTES needed on the output buffer for compressing
         /// `len` elements. The compression will likely end up writing less data
         /// but this is needed to make sure the compression will succeed.
-        pub fn bitpack_compress_bound(len: u32) u32 {
-            const n_blocks = (len + 1023) / 1024;
+        fn bitpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
             const max_block_size = N_BYTES * 1024;
 
             // Layout of the output is:
@@ -54,21 +56,15 @@ fn Unsigned(comptime T: type) type {
             // - bit_width(u8) per block
             // - packed remainder values
             // - packed full blocks
-            //
-            // We round the block count up to make sure we can comfortably write remainder data
-            // to the output buffer without worrying of going out of bounds when the length
-            // is < 1024.
-            //
-            // So we treat remainder data size as a full block of data size.
 
-            return @sizeOf(u32) + n_blocks + max_block_size * n_blocks;
+            return @sizeOf(u32) + 1 + n_blocks + n_remainder * N_BYTES + max_block_size * n_blocks;
         }
 
         /// Compress the input integers into the output buffer.
         /// `output` should be at least `bitpack_compress_bound(input.len)` BYTES.
         ///
         /// Returns the number of bytes written to the output.
-        pub fn bitpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
+        fn bitpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
             if (input.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -137,7 +133,7 @@ fn Unsigned(comptime T: type) type {
             return byte_offset + N_BYTES * offset;
         }
 
-        pub fn bitpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
+        fn bitpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
             if (output.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -220,9 +216,11 @@ fn Unsigned(comptime T: type) type {
         /// Returns the number of BYTES needed on the output buffer for compressing
         /// `len` elements. The compression will likely end up writing less data
         /// but this is needed to make sure the compression will succeed.
-        pub fn forpack_compress_bound(len: u32) u32 {
-            const n_blocks = (len + 1023) / 1024;
-            const max_block_size = N_BYTES * 1024;
+        fn forpack_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            const max_block_size = N_BYTES * (1024 + 1);
 
             // Layout of the output is:
             // - input length
@@ -230,21 +228,15 @@ fn Unsigned(comptime T: type) type {
             // - bit_width(u8) per block
             // - packed remainder values, a reference value before the packed values
             // - packed full blocks, a reference value before every block
-            //
-            // We round the block count up to make sure we can comfortably write remainder data
-            // to the output buffer without worrying of going out of bounds when the length
-            // is < 1024.
-            //
-            // So we treat remainder data size as a full block of data size.
 
-            return @sizeOf(u32) + (N_BYTES + 1) * n_blocks + max_block_size * n_blocks;
+            return @sizeOf(u32) + 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
         }
 
         /// Compress the input integers into the output buffer.
         /// `output` should be at least `forpack_compress_bound(input.len)` BYTES.
         ///
         /// Returns the number of bytes written to the output.
-        pub fn forpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
+        fn forpack_compress(noalias input: []const T, noalias output: []u8) Error!usize {
             if (input.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -322,7 +314,7 @@ fn Unsigned(comptime T: type) type {
             return byte_offset + N_BYTES * offset;
         }
 
-        pub fn forpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
+        fn forpack_decompress(noalias input: []const u8, noalias output: []T) Error!void {
             if (output.len > std.math.maxInt(u32)) {
                 return Error.InvalidInput;
             }
@@ -411,9 +403,214 @@ fn Unsigned(comptime T: type) type {
             return;
         }
 
-        // pub fn delta_compress_bound() void {}
-        // pub fn delta_compress() void {}
-        // pub fn delta_decompress() void {}
+        /// Returns the number of BYTES needed on the output buffer for compressing
+        /// `len` elements. The compression will likely end up writing less data
+        /// but this is needed to make sure the compression will succeed.
+        fn delta_compress_bound(len: u32) u32 {
+            const n_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            const max_block_size = N_BYTES * (FL.N_LANES + 1024);
+
+            // Layout of the output is:
+            // - input length
+            // - remainder values bit_width(u8)
+            // - bit_width(u8) per block
+            // - packed remainder values, a base value before the values
+            // - packed full blocks, N_LANES "bases" T before each block
+
+            return @sizeOf(u32) + 1 + n_blocks + (1 + n_remainder) * N_BYTES + max_block_size * n_blocks;
+        }
+
+        /// Compress the input integers into the output buffer.
+        /// `output` should be at least `delta_compress_bound(input.len)` BYTES.
+        ///
+        /// `transposed` and `delta` inputs are for using as internal scratch memory.
+        ///
+        /// Returns the number of bytes written to the output.
+        fn delta_compress(
+            noalias transposed: *[1024]T,
+            noalias delta: *[1024]T,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            if (input.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(input.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            const output_bound = delta_compress_bound(input.len);
+            if (output.len < output_bound) {
+                return Error.InvalidInput;
+            }
+
+            // write input.length
+            @as(*align(1) u32, @ptrCast(output[0..4])).* = len;
+
+            // Start writing compressed data, skip some bytes for saving bit_widths later on
+            // 4 is for the length, 1 is for the byte_width of remainder data, rest is for
+            // byte widths of whole blocks.
+            const byte_offset = 4 + 1 + n_whole_blocks;
+
+            // We should have this much capacity even though we will write less
+            const out_t_len = 1024 * (n_whole_blocks + 1);
+
+            const out: []align(1) T = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
+            std.debug.assert(out.len == out_t_len);
+
+            // number of T written so far, NOT number of bytes
+            var offset: usize = 0;
+
+            // write remainder data
+            if (n_remainder > 0) {
+                const base = input[0];
+
+                var prev = base;
+                var max_delta = 0;
+                for (input[0..n_remainder]) |v| {
+                    const d = v - prev;
+                    max_delta = @max(max_delta, d);
+                    prev = v;
+                }
+                const width = needed_width(max_delta);
+
+                output[4] = width;
+
+                out[offset] = base;
+                offset += 1;
+
+                const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
+                const n_written = SPack.delta_bitpack(
+                    base,
+                    input[0..n_remainder],
+                    out[offset..],
+                    width,
+                ) catch {
+                    @panic("failed scalar pack, this should never happen");
+                };
+                std.debug.assert(n_written == remainder_packed_len);
+                offset += remainder_packed_len;
+            } else {
+                output[4] = 0;
+            }
+
+            // Write whole blocks
+            const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
+            for (0..n_whole_blocks) |block_idx| {
+                const block: *const [1024]T = &input_blocks[block_idx];
+
+                FL.transpose(block, transposed);
+
+                const bases: *const [FL.N_LANES]T = transposed[0..FL.N_LANES];
+
+                FL.delta(block, bases, delta);
+
+                const max = max1024(delta);
+                const width = needed_width(max);
+
+                output[5 + block_idx] = width;
+
+                for (0..FL.N_LANES) |i| {
+                    out[offset + i] = bases[i];
+                }
+                offset += FL.N_LANES;
+
+                offset += FL.dyn_bit_pack(delta, out[offset..], width);
+            }
+
+            return byte_offset + N_BYTES * offset;
+        }
+
+        fn delta_decompress(noalias transposed: *[1024]T, noalias input: []const u8, noalias output: []T) Error!void {
+            if (output.len > std.math.maxInt(u32)) {
+                return Error.InvalidInput;
+            }
+            const len: u32 = @intCast(output.len);
+
+            const n_whole_blocks = len / 1024;
+            const n_remainder = len % 1024;
+
+            if (input.len < 4 + 1 + n_whole_blocks) {
+                return Error.InvalidInput;
+            }
+
+            const out_len: u32 = @as(*align(1) const u32, @ptrCast(input[0..4])).*;
+            if (len != out_len) {
+                return Error.InvalidInput;
+            }
+
+            const remainder_width = input[4];
+            if (remainder_width > N_BITS) {
+                return Error.InvalidInput;
+            }
+
+            const block_widths = input[5 .. 5 + n_whole_blocks];
+
+            const remainder_packed_len = (@as(u64, n_remainder) * @as(u64, remainder_width) + N_BITS - 1) / N_BITS;
+            var total_packed_len = remainder_packed_len + 1;
+            for (block_widths) |w| {
+                if (w > N_BITS) {
+                    return Error.InvalidInput;
+                }
+            }
+            for (block_widths) |w| {
+                total_packed_len += @as(u64, w) * 1024 / N_BITS + FL.N_LANES;
+            }
+
+            const data_section_byte_offset = 4 + 1 + n_whole_blocks;
+
+            const data_section_bytes = input[data_section_byte_offset..];
+            if (data_section_bytes.len != total_packed_len * N_BYTES) {
+                return Error.InvalidInput;
+            }
+
+            const data_section: []align(1) const T = @ptrCast(data_section_bytes);
+
+            // number of T read so far, NOT number of bytes
+            var offset: usize = 0;
+
+            // read remainder data
+            if (n_remainder > 0) {
+                const base = data_section[0];
+                offset += 1;
+
+                const n_read = try SPack.delta_unpack(
+                    base,
+                    data_section[offset .. offset + remainder_packed_len],
+                    output[0..n_remainder],
+                    remainder_width,
+                );
+                std.debug.assert(n_read == remainder_packed_len);
+                offset += remainder_packed_len;
+            }
+
+            // Read whole blocks
+            for (0..n_whole_blocks) |block_idx| {
+                const width = input[5 + block_idx];
+
+                const bases_p = data_section[offset..];
+                const bases: *align(1) const [FL.N_LANES]T = bases_p[0..FL.N_LANES];
+                offset += FL.N_LANES;
+
+                offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed, width);
+
+                const out_offset = output[block_idx * 1024 + n_remainder ..];
+                FL.untranspose(transposed, out_offset[0..1024]);
+            }
+
+            std.debug.assert(offset == total_packed_len);
+            std.debug.assert(offset == data_section.len);
+
+            const end = data_section_byte_offset + @sizeOf(T) * offset;
+            if (end != input.len) {
+                return Error.InvalidInput;
+            }
+
+            return;
+        }
 
         fn max1024(input: *const [1024]T) T {
             var m = input[0];
@@ -458,6 +655,7 @@ fn TestUnsigned(comptime T: type) type {
                 return @max(
                     U.bitpack_compress_bound(MAX_NUM_INTS),
                     U.forpack_compress_bound(MAX_NUM_INTS),
+                    U.delta_compress_bound(MAX_NUM_INTS),
                 );
             }
 
@@ -554,6 +752,38 @@ fn TestUnsigned(comptime T: type) type {
             try std.testing.fuzz(ctx, roundtrip_forpack, .{});
         }
 
+        fn roundtrip_delta_pack(ctx: Context, input: []const u8) anyerror!void {
+            const in = read_input(ctx.input, input);
+
+            var transposed: [1024]T = undefined;
+            var delta: [1024]T = undefined;
+
+            const compressed_len = try U.delta_compress(
+                &transposed,
+                &delta,
+                in,
+                ctx.compressed,
+            );
+
+            std.debug.assert(
+                compressed_len <= U.delta_compress_bound(MAX_NUM_INTS),
+            );
+
+            U.delta_decompress(
+                &transposed,
+                ctx.compressed[0..compressed_len],
+                ctx.output[0..in.len],
+            ) catch unreachable;
+
+            try std.testing.expectEqualSlices(T, in, ctx.output[0..in.len]);
+        }
+
+        test roundtrip_delta_pack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx, roundtrip_delta_pack, .{});
+        }
+
         fn garbage_bitpack(ctx: []T, input: []const u8) anyerror!void {
             const output = ctx;
 
@@ -570,6 +800,44 @@ fn TestUnsigned(comptime T: type) type {
             var ctx = Context.init();
             defer ctx.deinit();
             try std.testing.fuzz(ctx.input, garbage_bitpack, .{});
+        }
+
+        fn garbage_forpack(ctx: []T, input: []const u8) anyerror!void {
+            const output = ctx;
+
+            if (input.len < 4) {
+                U.forpack_decompress(input, output) catch return;
+            } else {
+                const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
+                const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
+                U.forpack_decompress(input[4..], output[0..num_ints]) catch return;
+            }
+        }
+
+        test garbage_forpack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx.input, garbage_forpack, .{});
+        }
+
+        fn garbage_delta_pack(ctx: []T, input: []const u8) anyerror!void {
+            const output = ctx;
+
+            var transposed: [1024]T = undefined;
+
+            if (input.len < 4) {
+                U.delta_decompress(&transposed, input, output) catch return;
+            } else {
+                const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
+                const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
+                U.delta_decompress(&transposed, input[4..], output[0..num_ints]) catch return;
+            }
+        }
+
+        test garbage_delta_pack {
+            var ctx = Context.init();
+            defer ctx.deinit();
+            try std.testing.fuzz(ctx.input, garbage_delta_pack, .{});
         }
     };
 }
