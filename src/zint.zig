@@ -383,7 +383,7 @@ fn Basic(comptime T: type) type {
                 if (IS_SIGNED) {
                     const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
                     const n_read = try SPack.bitunpack(
-                        data_section[0..remainder_packed_len],
+                        data_section[offset .. offset + remainder_packed_len],
                         ref,
                         zigzagged,
                         remainder_width,
