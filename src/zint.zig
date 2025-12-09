@@ -690,17 +690,10 @@ fn Basic(comptime T: type) type {
 
             // write remainder data
             if (n_remainder > 0) {
-                const remainder_raw = input[0..n_remainder];
-
-                const remainder_data: []const U, const is_zigzag: u1 = if (IS_SIGNED) maybe_zz: {
-                    if (has_negative(remainder_raw)) {
-                        const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
-                        ZigZag(T).encode(remainder_raw, zigzagged);
-                        break :maybe_zz .{ zigzagged, 1 };
-                    } else {
-                        break :maybe_zz .{ @ptrCast(remainder_raw), 0 };
-                    }
-                } else .{ @ptrCast(remainder_raw), 0 };
+                const remainder_data, const is_zigzag = load_remainder(
+                    input[0..n_remainder],
+                    scratch[0..n_remainder],
+                );
 
                 const max = std.mem.max(U, remainder_data);
                 const width = needed_width(max);
@@ -728,17 +721,7 @@ fn Basic(comptime T: type) type {
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (0..n_whole_blocks) |block_idx| {
-                const block_raw: *const [1024]T = &input_blocks[block_idx];
-
-                const block: *const [1024]U, const is_zigzag: u1 = if (IS_SIGNED) maybe_zz: {
-                    if (has_negative1024(block_raw)) {
-                        const zigzagged: *[1024]U = @ptrCast(scratch);
-                        ZigZag(T).encode(block_raw, zigzagged);
-                        break :maybe_zz .{ zigzagged, 1 };
-                    } else {
-                        break :maybe_zz .{ @ptrCast(block_raw), 0 };
-                    }
-                } else .{ @ptrCast(block_raw), 0 };
+                const block, const is_zigzag = load_block(&input_blocks[block_idx], scratch);
 
                 const max = max1024(block);
                 const width = needed_width(max);
@@ -1296,6 +1279,39 @@ fn Basic(comptime T: type) type {
                 has_n |= input[i] < 0;
             }
             return has_n;
+        }
+
+        /// Load input data, apply zigzag encoding if needed
+        /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
+        fn load_remainder(input: []const T, scratch: []T) struct { []const U, u1 } {
+            std.debug.assert(input.len == scratch.len);
+            if (IS_SIGNED) {
+                if (has_negative(input)) {
+                    const zigzagged: []U = @ptrCast(scratch);
+                    ZigZag(T).encode(input, zigzagged);
+                    return .{ zigzagged, 1 };
+                } else {
+                    return .{ @ptrCast(input), 0 };
+                }
+            } else {
+                return .{ @ptrCast(input), 0 };
+            }
+        }
+
+        /// Load input data, apply zigzag encoding if needed
+        /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
+        fn load_block(input: *const [1024]T, scratch: *[1024]T) struct { *const [1024]U, u1 } {
+            if (IS_SIGNED) {
+                if (has_negative1024(input)) {
+                    const zigzagged: *[1024]U = @ptrCast(scratch);
+                    ZigZag(T).encode(input, zigzagged);
+                    return .{ zigzagged, 1 };
+                } else {
+                    return .{ @ptrCast(input), 0 };
+                }
+            } else {
+                return .{ @ptrCast(input), 0 };
+            }
         }
     };
 }
