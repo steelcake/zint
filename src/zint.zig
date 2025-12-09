@@ -1,21 +1,195 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const FastLanes = @import("./fastlanes.zig").FastLanes;
 const ZigZag = @import("./zigzag.zig").ZigZag;
 const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
-// pub fn Zint(comptime T: type) type {
-//     _ = T;
-//     return struct {};
-// }
-
-// fn Signed128(comptime T: type) type {}
-
-// fn Unsigned128(comptime T: type) type {}
-
-// fn Unsigned256(comptime T: type) type {}
+const CONTEXT_SIZE = 1 << 16; // 64KB context is needed in case of delta compressing 256bit integers
 
 pub const Error = error{InvalidInput};
+
+pub const Ctx = struct {
+    buf: []align(64) u8,
+
+    pub fn init(alloc: Allocator) error{OutOfMemory}!Ctx {
+        const buf = try alloc.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(64), CONTEXT_SIZE);
+
+        return .{
+            .buf = buf,
+        };
+    }
+
+    pub fn deinit(self: *Ctx, alloc: Allocator) void {
+        alloc.free(self.buf);
+        self.buf = &.{};
+    }
+
+    pub fn typed(self: Ctx, comptime T: type) []align(64) T {
+        return @ptrCast(self.buf);
+    }
+};
+
+pub fn Zint(comptime T: type) type {
+    return struct {
+        pub fn bitpack_compress_bound(len: u32) u32 {
+            return switch (T) {
+                i128, u128 => Impl128(T).bitpack_compress_bound(len),
+                else => Impl(T).bitpack_compress_bound(len),
+            };
+        }
+
+        pub fn bitpack_compress(
+            ctx: Ctx,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            const buf = ctx.typed(T);
+
+            return switch (T) {
+                i128, u128 => Impl128(T).bitpack_compress(
+                    buf[0..1024],
+                    buf[1024..1536],
+                    input,
+                    output,
+                ),
+                else => Impl(T).bitpack_compress(
+                    buf[0..1024],
+                    input,
+                    output,
+                ),
+            };
+        }
+
+        pub fn bitpack_decompress(
+            ctx: Ctx,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            const buf = ctx.typed(T);
+
+            return switch (T) {
+                i128, u128 => Impl128(T).bitpack_decompress(
+                    buf[0..1024],
+                    buf[1024..1536],
+                    input,
+                    output,
+                ),
+                else => Impl(T).bitpack_decompress(
+                    buf[0..1024],
+                    input,
+                    output,
+                ),
+            };
+        }
+
+        pub fn forpack_compress_bound(len: u32) u32 {
+            return switch (T) {
+                i128, u128 => Impl128(T).forpack_compress_bound(len),
+                else => Impl(T).forpack_compress_bound(len),
+            };
+        }
+
+        pub fn forpack_compress(
+            ctx: Ctx,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            const buf = ctx.typed(T);
+
+            return switch (T) {
+                i128, u128 => Impl128(T).forpack_compress(
+                    buf[0..1024],
+                    buf[1024..1536],
+                    input,
+                    output,
+                ),
+                else => Impl(T).forpack_compress(
+                    buf[0..1024],
+                    input,
+                    output,
+                ),
+            };
+        }
+
+        pub fn forpack_decompress(
+            ctx: Ctx,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            const buf = ctx.typed(T);
+
+            return switch (T) {
+                i128, u128 => Impl128(T).forpack_decompress(
+                    buf[0..1024],
+                    buf[1024..1536],
+                    input,
+                    output,
+                ),
+                else => Impl(T).forpack_decompress(
+                    buf[0..1024],
+                    input,
+                    output,
+                ),
+            };
+        }
+
+        pub fn deltapack_compress_bound(len: u32) u32 {
+            return switch (T) {
+                i128, u128 => Impl128(T).delta_compress_bound(len),
+                else => Impl(T).delta_compress_bound(len),
+            };
+        }
+
+        pub fn deltapack_compress(
+            ctx: Ctx,
+            noalias input: []const T,
+            noalias output: []u8,
+        ) Error!usize {
+            const buf = ctx.typed(T);
+
+            return switch (T) {
+                i128, u128 => Impl128(T).delta_compress(
+                    buf[0..1024],
+                    buf[1024..1536],
+                    buf[1536..2048],
+                    input,
+                    output,
+                ),
+                else => Impl(T).delta_compress(
+                    buf[0..1024],
+                    buf[1024..2048],
+                    input,
+                    output,
+                ),
+            };
+        }
+
+        pub fn deltapack_decompress(
+            ctx: Ctx,
+            noalias input: []const u8,
+            noalias output: []T,
+        ) Error!usize {
+            const buf = ctx.typed(T);
+
+            return switch (T) {
+                i128, u128 => Impl128(T).delta_decompress(
+                    buf[0..1024],
+                    buf[1024..1536],
+                    buf[1536..2048],
+                    input,
+                    output,
+                ),
+                else => Impl(T).delta_decompress(
+                    buf[0..1024],
+                    buf[1024..2048],
+                    input,
+                    output,
+                ),
+            };
+        }
+    };
+}
 
 fn Impl128(comptime T: type) type {
     const I = switch (T) {
@@ -95,10 +269,6 @@ fn Impl128(comptime T: type) type {
 
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
-
-            if (input.len < 1 + n_whole_blocks) {
-                return Error.InvalidInput;
-            }
 
             // number of bytes read so far
             var offset: usize = 0;
@@ -192,10 +362,6 @@ fn Impl128(comptime T: type) type {
 
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
-
-            if (input.len < 1 + n_whole_blocks) {
-                return Error.InvalidInput;
-            }
 
             // number of bytes read so far
             var offset: usize = 0;
@@ -292,10 +458,6 @@ fn Impl128(comptime T: type) type {
 
             const n_whole_blocks = len / 1024;
             const n_remainder = len % 1024;
-
-            if (input.len < 1 + n_whole_blocks) {
-                return Error.InvalidInput;
-            }
 
             // number of bytes read so far
             var offset: usize = 0;
@@ -534,11 +696,11 @@ fn Impl(comptime T: type) type {
             const data_section_byte_offset = 1 + n_whole_blocks;
 
             const data_section_bytes = input[data_section_byte_offset..];
-            if (data_section_bytes.len != total_packed_len * N_BYTES) {
+            if (data_section_bytes.len < total_packed_len * N_BYTES) {
                 return Error.InvalidInput;
             }
 
-            const data_section: []align(1) const U = @ptrCast(data_section_bytes);
+            const data_section: []align(1) const U = @ptrCast(data_section_bytes[0 .. total_packed_len * N_BYTES]);
 
             // number of T read so far, NOT number of bytes
             var offset: usize = 0;
@@ -737,11 +899,11 @@ fn Impl(comptime T: type) type {
             const data_section_byte_offset = 1 + n_whole_blocks;
 
             const data_section_bytes = input[data_section_byte_offset..];
-            if (data_section_bytes.len != total_packed_len * N_BYTES) {
+            if (data_section_bytes.len < total_packed_len * N_BYTES) {
                 return Error.InvalidInput;
             }
 
-            const data_section: []align(1) const U = @ptrCast(data_section_bytes);
+            const data_section: []align(1) const U = @ptrCast(data_section_bytes[0 .. total_packed_len * N_BYTES]);
 
             // number of T read so far, NOT number of bytes
             var offset: usize = 0;
@@ -979,11 +1141,11 @@ fn Impl(comptime T: type) type {
             const data_section_byte_offset = 1 + n_whole_blocks;
 
             const data_section_bytes = input[data_section_byte_offset..];
-            if (data_section_bytes.len != total_packed_len * N_BYTES) {
+            if (data_section_bytes.len < total_packed_len * N_BYTES) {
                 return Error.InvalidInput;
             }
 
-            const data_section: []align(1) const U = @ptrCast(data_section_bytes);
+            const data_section: []align(1) const U = @ptrCast(data_section_bytes[0 .. total_packed_len * N_BYTES]);
 
             // number of T read so far, NOT number of bytes
             var offset: usize = 0;
@@ -1100,43 +1262,42 @@ fn Test(comptime T: type) type {
     return struct {
         const MAX_NUM_INTS = 123321;
 
-        const U = Impl(T);
+        const Z = Zint(T);
 
-        const Context = struct {
+        const TestCtx = struct {
             const page_allocator = std.heap.page_allocator;
 
+            ctx: Ctx,
             input: []T,
             compressed: []u8,
             output: []T,
 
             fn compress_bound() usize {
                 return @max(
-                    U.bitpack_compress_bound(MAX_NUM_INTS),
-                    U.forpack_compress_bound(MAX_NUM_INTS),
-                    U.delta_compress_bound(MAX_NUM_INTS),
+                    Z.bitpack_compress_bound(MAX_NUM_INTS),
+                    Z.forpack_compress_bound(MAX_NUM_INTS),
+                    Z.deltapack_compress_bound(MAX_NUM_INTS),
                 );
             }
 
-            fn init() Context {
+            fn init() TestCtx {
                 const input = page_allocator.alloc(T, MAX_NUM_INTS) catch unreachable;
                 const output = page_allocator.alloc(T, MAX_NUM_INTS) catch unreachable;
                 const compressed = page_allocator.alloc(
                     u8,
                     compress_bound(),
                 ) catch unreachable;
-
-                @memset(input, 0);
-                @memset(output, 0);
-                @memset(compressed, 0);
+                const ctx = Ctx.init(page_allocator) catch unreachable;
 
                 return .{
                     .input = input,
                     .output = output,
                     .compressed = compressed,
+                    .ctx = ctx,
                 };
             }
 
-            fn deinit(self: *Context) void {
+            fn deinit(self: *TestCtx) void {
                 page_allocator.free(self.input);
                 page_allocator.free(self.output);
                 page_allocator.free(self.compressed);
@@ -1144,6 +1305,8 @@ fn Test(comptime T: type) type {
                 self.input = &.{};
                 self.output = &.{};
                 self.compressed = &.{};
+
+                self.ctx.deinit(page_allocator);
             }
         };
 
@@ -1158,26 +1321,24 @@ fn Test(comptime T: type) type {
             return typed_input[0..num_ints];
         }
 
-        fn roundtrip_bitpack(ctx: Context, input: []const u8) anyerror!void {
+        fn roundtrip_bitpack(ctx: TestCtx, input: []const u8) anyerror!void {
             const in = read_input(ctx.input, input);
 
-            var scratch: [1024]T = undefined;
-
-            const compressed_len = try U.bitpack_compress(
-                &scratch,
+            const compressed_len = try Z.bitpack_compress(
+                ctx.ctx,
                 in,
                 ctx.compressed,
             );
 
             std.debug.assert(
-                compressed_len <= U.bitpack_compress_bound(MAX_NUM_INTS),
+                compressed_len <= Z.bitpack_compress_bound(MAX_NUM_INTS),
             );
 
-            const n_decompress = U.bitpack_decompress(
-                &scratch,
+            const n_decompress = try Z.bitpack_decompress(
+                ctx.ctx,
                 ctx.compressed[0..compressed_len],
                 ctx.output[0..in.len],
-            ) catch unreachable;
+            );
 
             try std.testing.expectEqual(n_decompress, compressed_len);
 
@@ -1185,31 +1346,29 @@ fn Test(comptime T: type) type {
         }
 
         test roundtrip_bitpack {
-            var ctx = Context.init();
+            var ctx = TestCtx.init();
             defer ctx.deinit();
             try std.testing.fuzz(ctx, roundtrip_bitpack, .{});
         }
 
-        fn roundtrip_forpack(ctx: Context, input: []const u8) anyerror!void {
+        fn roundtrip_forpack(ctx: TestCtx, input: []const u8) anyerror!void {
             const in = read_input(ctx.input, input);
 
-            var scratch: [1024]T = undefined;
-
-            const compressed_len = try U.forpack_compress(
-                &scratch,
+            const compressed_len = try Z.forpack_compress(
+                ctx.ctx,
                 in,
                 ctx.compressed,
             );
 
             std.debug.assert(
-                compressed_len <= U.forpack_compress_bound(MAX_NUM_INTS),
+                compressed_len <= Z.forpack_compress_bound(MAX_NUM_INTS),
             );
 
-            const n_decompress = U.forpack_decompress(
-                &scratch,
+            const n_decompress = try Z.forpack_decompress(
+                ctx.ctx,
                 ctx.compressed[0..compressed_len],
                 ctx.output[0..in.len],
-            ) catch unreachable;
+            );
 
             try std.testing.expectEqual(n_decompress, compressed_len);
 
@@ -1217,36 +1376,29 @@ fn Test(comptime T: type) type {
         }
 
         test roundtrip_forpack {
-            var ctx = Context.init();
+            var ctx = TestCtx.init();
             defer ctx.deinit();
             try std.testing.fuzz(ctx, roundtrip_forpack, .{});
         }
 
-        fn roundtrip_delta_pack(ctx: Context, input: []const u8) anyerror!void {
+        fn roundtrip_delta_pack(ctx: TestCtx, input: []const u8) anyerror!void {
             const in = read_input(ctx.input, input);
 
-            var transposed: [1024]T = undefined;
-            var delta: [1024]T = undefined;
-
-            const compressed_len = try U.delta_compress(
-                &transposed,
-                &delta,
+            const compressed_len = try Z.deltapack_compress(
+                ctx.ctx,
                 in,
                 ctx.compressed,
             );
 
             std.debug.assert(
-                compressed_len <= U.delta_compress_bound(MAX_NUM_INTS),
+                compressed_len <= Z.deltapack_compress_bound(MAX_NUM_INTS),
             );
 
-            var scratch: [1024]T = undefined;
-
-            const n_decompress = U.delta_decompress(
-                &scratch,
-                &transposed,
+            const n_decompress = try Z.deltapack_decompress(
+                ctx.ctx,
                 ctx.compressed[0..compressed_len],
                 ctx.output[0..in.len],
-            ) catch unreachable;
+            );
 
             try std.testing.expectEqual(n_decompress, compressed_len);
 
@@ -1254,70 +1406,57 @@ fn Test(comptime T: type) type {
         }
 
         test roundtrip_delta_pack {
-            var ctx = Context.init();
+            var ctx = TestCtx.init();
             defer ctx.deinit();
             try std.testing.fuzz(ctx, roundtrip_delta_pack, .{});
         }
 
-        fn garbage_bitpack(ctx: []T, input: []const u8) anyerror!void {
-            const output = ctx;
-
-            var scratch: [1024]T = undefined;
-
+        fn garbage_bitpack(ctx: TestCtx, input: []const u8) anyerror!void {
             if (input.len < 4) {
-                U.bitpack_decompress(&scratch, input, output) catch return;
+                _ = Z.bitpack_decompress(ctx.ctx, input, ctx.output) catch return;
             } else {
                 const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
                 const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
-                U.bitpack_decompress(&scratch, input[4..], output[0..num_ints]) catch return;
+                _ = Z.bitpack_decompress(ctx.ctx, input[4..], ctx.output[0..num_ints]) catch return;
             }
         }
 
         test garbage_bitpack {
-            var ctx = Context.init();
+            var ctx = TestCtx.init();
             defer ctx.deinit();
-            try std.testing.fuzz(ctx.input, garbage_bitpack, .{});
+            try std.testing.fuzz(ctx, garbage_bitpack, .{});
         }
 
-        fn garbage_forpack(ctx: []T, input: []const u8) anyerror!void {
-            const output = ctx;
-
-            var scratch: [1024]T = undefined;
-
+        fn garbage_forpack(ctx: TestCtx, input: []const u8) anyerror!void {
             if (input.len < 4) {
-                U.forpack_decompress(&scratch, input, output) catch return;
+                _ = Z.forpack_decompress(ctx.ctx, input, ctx.output) catch return;
             } else {
                 const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
                 const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
-                U.forpack_decompress(&scratch, input[4..], output[0..num_ints]) catch return;
+                _ = Z.forpack_decompress(ctx.ctx, input[4..], ctx.output[0..num_ints]) catch return;
             }
         }
 
         test garbage_forpack {
-            var ctx = Context.init();
+            var ctx = TestCtx.init();
             defer ctx.deinit();
-            try std.testing.fuzz(ctx.input, garbage_forpack, .{});
+            try std.testing.fuzz(ctx, garbage_forpack, .{});
         }
 
-        fn garbage_delta_pack(ctx: []T, input: []const u8) anyerror!void {
-            const output = ctx;
-
-            var transposed: [1024]T = undefined;
-            var scratch: [1024]T = undefined;
-
+        fn garbage_delta_pack(ctx: TestCtx, input: []const u8) anyerror!void {
             if (input.len < 4) {
-                U.delta_decompress(&scratch, &transposed, input, output) catch return;
+                _ = Z.deltapack_decompress(ctx.ctx, input, ctx.output) catch return;
             } else {
                 const n_ints: u32 = @bitCast(@as([*]const [4]u8, @ptrCast(input.ptr))[0]);
                 const num_ints = @min(@as(usize, n_ints), MAX_NUM_INTS);
-                U.delta_decompress(&scratch, &transposed, input[4..], output[0..num_ints]) catch return;
+                _ = Z.deltapack_decompress(ctx.ctx, input[4..], ctx.output[0..num_ints]) catch return;
             }
         }
 
         test garbage_delta_pack {
-            var ctx = Context.init();
+            var ctx = TestCtx.init();
             defer ctx.deinit();
-            try std.testing.fuzz(ctx.input, garbage_delta_pack, .{});
+            try std.testing.fuzz(ctx, garbage_delta_pack, .{});
         }
     };
 }
@@ -1327,8 +1466,12 @@ test {
     _ = Test(u16);
     _ = Test(u32);
     _ = Test(u64);
+
     _ = Test(i8);
     _ = Test(i16);
     _ = Test(i32);
     _ = Test(i64);
+
+    _ = Test(i128);
+    _ = Test(u128);
 }

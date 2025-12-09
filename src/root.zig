@@ -11,8 +11,8 @@ const zigzag = @import("./zigzag.zig");
 const scalar_bitpack = @import("./scalar_bitpack.zig");
 const zint = @import("./zint.zig");
 
-pub const FastLanes = fastlanes.FastLanes;
-// pub const Zint = zint.Zint;
+pub const Zint = zint.Zint;
+pub const Context = zint.Context;
 
 test {
     _ = fastlanes;
