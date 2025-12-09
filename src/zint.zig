@@ -9,6 +9,9 @@ const CONTEXT_SIZE = 1 << 16; // 64KB context is needed in case of delta compres
 
 pub const Error = error{InvalidInput};
 
+/// Context that is used for compression and decompression operations.
+///
+/// This is a fairly large allocation (currently 64KB). So it is recommended to re-use this.
 pub const Ctx = struct {
     buf: []align(64) u8,
 
@@ -25,13 +28,16 @@ pub const Ctx = struct {
         self.buf = &.{};
     }
 
-    pub fn typed(self: Ctx, comptime T: type) []align(64) T {
+    fn typed(self: Ctx, comptime T: type) []align(64) T {
         return @ptrCast(self.buf);
     }
 };
 
+/// Structure to compress/decompress integers with type `T`
 pub fn Zint(comptime T: type) type {
     return struct {
+        /// Compression function will expect this amount of bytes of capacity on the
+        /// output buffer.
         pub fn bitpack_compress_bound(len: u32) u32 {
             return switch (T) {
                 i128, u128 => Impl128(T).bitpack_compress_bound(len),
@@ -40,6 +46,12 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Compress integers from `input` to `output` buffer.
+        ///
+        /// Will error if `output.len < bitpack_compress_bound(input.len)` or if
+        /// `input.len >= maxInt(u32)`.
+        ///
+        /// Returns the number of bytes written to the `output`.
         pub fn bitpack_compress(
             ctx: Ctx,
             noalias input: []const T,
@@ -68,6 +80,13 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Decompress integers from `input` buffer to `output`.
+        ///
+        /// Expects enough data to decompress `output.len` integers from `input`.
+        ///
+        /// Returns the byte count of data read from `input` buffer.
+        ///
+        /// Will error if input data is invalid or short.
         pub fn bitpack_decompress(
             ctx: Ctx,
             noalias input: []const u8,
@@ -96,6 +115,8 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Compression function will expect this amount of bytes of capacity on the
+        /// output buffer.
         pub fn forpack_compress_bound(len: u32) u32 {
             return switch (T) {
                 i128, u128 => Impl128(T).forpack_compress_bound(len),
@@ -104,6 +125,12 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Compress integers from `input` to `output` buffer.
+        ///
+        /// Will error if `output.len < forpack_compress_bound(input.len)` or if
+        /// `input.len >= maxInt(u32)`.
+        ///
+        /// Returns the number of bytes written to the `output`.
         pub fn forpack_compress(
             ctx: Ctx,
             noalias input: []const T,
@@ -132,6 +159,13 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Decompress integers from `input` buffer to `output`.
+        ///
+        /// Expects enough data to decompress `output.len` integers from `input`.
+        ///
+        /// Returns the byte count of data read from `input` buffer.
+        ///
+        /// Will error if input data is invalid or short.
         pub fn forpack_decompress(
             ctx: Ctx,
             noalias input: []const u8,
@@ -160,6 +194,8 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Compression function will expect this amount of bytes of capacity on the
+        /// output buffer.
         pub fn deltapack_compress_bound(len: u32) u32 {
             return switch (T) {
                 i128, u128 => Impl128(T).delta_compress_bound(len),
@@ -168,6 +204,12 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Compress integers from `input` to `output` buffer.
+        ///
+        /// Will error if `output.len < deltapack_compress_bound(input.len)` or if
+        /// `input.len >= maxInt(u32)`.
+        ///
+        /// Returns the number of bytes written to the `output`.
         pub fn deltapack_compress(
             ctx: Ctx,
             noalias input: []const T,
@@ -199,6 +241,13 @@ pub fn Zint(comptime T: type) type {
             };
         }
 
+        /// Decompress integers from `input` buffer to `output`.
+        ///
+        /// Expects enough data to decompress `output.len` integers from `input`.
+        ///
+        /// Returns the byte count of data read from `input` buffer.
+        ///
+        /// Will error if input data is invalid or short.
         pub fn deltapack_decompress(
             ctx: Ctx,
             noalias input: []const u8,

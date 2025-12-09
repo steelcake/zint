@@ -4,23 +4,32 @@ Integer compression library for Zig based on FastLanes
 
 ## Features
 
-- High performance. Zint uses FastLanes internally so it implements fully vectorized delta encoding and bitpacking.
-- Safe decompress API. It is safe to decompress untrusted input.
-- Compresses each block (1024) elements inside the input dynamically. Automatically applies delta encoding if it is beneficial.
+- Zint uses FastLanes internally so it implements fully vectorized delta encoding and bitpacking.
+- It is safe to decompress untrusted input.
+- Supports signed integers.
+- Supports 128 and 256 bit integers.
+- Supports delta, FrameOfReference and regular bitpacking.
 
 ## Example usage
 
 ```zig
-const Z = @require("zint").Zint(T);
+const zint = @import("zint");
+const Zint = zint.Zint;
+const Ctx = zint.Ctx;
 
-const compress_buf = try std.heap.page_allocator.alloc(u8, Z.compress_bound(input.len));
+const ctx = try Ctx.init(std.heap.page_allocator);
+defer Ctx.deinit(std.heap.page_allocator);
 
-const compressed_size = Z.compress(input, compress_buf);
+const compress_buf = try std.heap.page_allocator.alloc(u8, Z.bitpack_compress_bound(input.len));
+
+const compressed_size = Z.bitpack_compress(ctx, input, compress_buf);
 
 const compressed = compress_buf[0..compressed_size];
 
 const output = try std.heap.page_allocator.alloc(T, input.len);
-try Z.decompress(compressed, output);
+const consumed_size = try Z.decompress(ctx, compressed, output);
+
+std.debug.assert(compressed_size == consumed_size);
 
 std.debug.assert(std.mem.eql(T, output, input));
 ```
