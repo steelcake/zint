@@ -34,6 +34,19 @@ std.debug.assert(compressed_size == consumed_size);
 std.debug.assert(std.mem.eql(T, output, input));
 ```
 
+# Benchmark Results
+
+Some example results are located in [./benchmark_results](./benchmark_results).
+
+The benchmark measures performance of different Zint variants on some synthetic datasets.
+
+Run with `make bench`.
+
+My interpretation of the benchmarks is that using the right Zint variant for right kind of data is massively faster than lz4 or zstd.
+Bitpacking and FrameOfReference+BitPacking almost match memcopy performance but Delta+Bitpacking is slower than memcopy.
+
+In terms of compression ratio, the right variant of Zint is better or on par with zstd(level 1) while lz4 tends to be worse.
+
 ## License
 
 Licensed under either of
