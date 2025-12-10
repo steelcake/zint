@@ -106,7 +106,6 @@ fn Width7(comptime T: type) type {
 const ALGOS = .{
     MemCopy,
     Lz4,
-    Zstd,
     ZintBitpack,
     ZintForpack,
     ZintDeltapack,
@@ -127,13 +126,13 @@ fn Zstd(comptime T: type) type {
         fn init() Self {
             const alloc = page_allocator;
 
-            const zstd_dctx_cap = sys.ZSTD_estimateDCtxSize();
+            const zstd_dctx_cap = sys.ZSTD_estimateDCtxSize(ZSTD_LEVEL);
 
-            const zstd_dstate = alloc.alignedAlloc(
+            const zstd_dstate = try alloc.alignedAlloc(
                 u8,
                 std.mem.Alignment.fromByteUnits(8),
                 @intCast(zstd_dctx_cap),
-            ) catch @panic("unreachable");
+            );
 
             const zstd_dctx = sys.ZSTD_initStaticDCtx(zstd_dstate.ptr, zstd_dstate.len) orelse {
                 @panic("failed to init zstd decompression ctx");
@@ -141,15 +140,16 @@ fn Zstd(comptime T: type) type {
 
             const zstd_cctx_cap = sys.ZSTD_estimateCCtxSize(ZSTD_LEVEL);
 
-            const zstd_cstate = alloc.alignedAlloc(
+            const zstd_cstate = try alloc.alignedAlloc(
                 u8,
                 std.mem.Alignment.fromByteUnits(8),
                 @intCast(zstd_cctx_cap),
-            ) catch @panic("unreachable");
+            );
 
             const zstd_cctx = sys.ZSTD_initStaticCCtx(zstd_cstate.ptr, zstd_cstate.len) orelse {
                 @panic("failed to init zstd compression ctx");
             };
+
 
             return .{
                 .zstd_dctx = zstd_dctx,
@@ -170,15 +170,17 @@ fn Zstd(comptime T: type) type {
         }
 
         fn compress(self: Self, noalias input: []const T, noalias output: []u8) anyerror!usize {
-            return try zstd_compress(self.zstd_cctx, @as([]const u8, @ptrCast(input)), output, ZSTD_LEVEL);
+            _ = self;
+            return try lz4_compress(@as([]const u8, @ptrCast(input)), output);
         }
 
         fn decompress(self: Self, noalias input: []const u8, noalias output: []T) anyerror!usize {
-            return try zstd_decompress(self.zstd_dctx, input, @as([]u8, @ptrCast(output)));
+            _ = self;
+            return try lz4_decompress(input, @as([]u8, @ptrCast(output)));
         }
 
         fn name() []const u8 {
-            return "zstd(level 1)";
+            return "lz4";
         }
     };
 }
@@ -261,7 +263,7 @@ fn ZintBitpack(comptime T: type) type {
 
         fn init() Self {
             return .{
-                .ctx = zint.Ctx.init(std.heap.page_allocator) catch @panic("unreachable"),
+                .ctx = zint.Ctx.init(std.heap.page_allocator) catch unreachable,
             };
         }
 
@@ -298,7 +300,7 @@ fn ZintForpack(comptime T: type) type {
 
         fn init() Self {
             return .{
-                .ctx = zint.Ctx.init(std.heap.page_allocator) catch @panic("unreachable"),
+                .ctx = zint.Ctx.init(std.heap.page_allocator) catch unreachable,
             };
         }
 
@@ -335,7 +337,7 @@ fn ZintDeltapack(comptime T: type) type {
 
         fn init() Self {
             return .{
-                .ctx = zint.Ctx.init(std.heap.page_allocator) catch @panic("unreachable"),
+                .ctx = zint.Ctx.init(std.heap.page_allocator) catch unreachable,
             };
         }
 
@@ -455,7 +457,7 @@ fn bench_one(
 }
 
 fn timer() std.time.Timer {
-    return std.time.Timer.start() catch @panic("unreachable");
+    return std.time.Timer.start() catch unreachable;
 }
 
 const sys = @cImport({
