@@ -23,9 +23,8 @@ pub const Ctx = struct {
         };
     }
 
-    pub fn deinit(self: *Ctx, alloc: Allocator) void {
+    pub fn deinit(self: Ctx, alloc: Allocator) void {
         alloc.free(self.buf);
-        self.buf = &.{};
     }
 
     fn typed(self: Ctx, comptime T: type) []align(64) T {
