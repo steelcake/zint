@@ -34,6 +34,16 @@ std.debug.assert(compressed_size == consumed_size);
 std.debug.assert(std.mem.eql(T, output, input));
 ```
 
+# FastLanes
+
+Zint is based on the FastLanes integer compression.
+
+The fastlanes implementation on this repo is ported from rust implementation of fastlanes by spiraldb.
+
+- [paper](https://www.vldb.org/pvldb/vol16/p2132-afroozeh.pdf)
+- [original implementation](https://github.com/cwida/FastLanes) 
+- [rust implementation by spiraldb](https://github.com/spiraldb/fastlanes)
+
 # Benchmark Results
 
 Some example results are located in [./benchmark_results](./benchmark_results).
