@@ -9,7 +9,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    _ = zint;
 
     const tests = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -33,4 +32,17 @@ pub fn build(b: *std.Build) void {
     const run_fuzz = b.addRunArtifact(fuzz_target);
     const fuzz_step = b.step("fuzz", "Run fuzz tests");
     fuzz_step.dependOn(&run_fuzz.step);
+
+    const bench = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    bench.root_module.addImport("zint", zint);
+    const run_bench = b.addRunArtifact(bench);
+    const bench_step = b.step("bench", "Run benchmarks");
+    bench_step.dependOn(&run_bench.step);
 }
