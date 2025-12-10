@@ -13,7 +13,7 @@ const TYPES = .{
 };
 
 const LENGTHS: []const u32 = &.{
-    1023, 1024, 1025, 123321, 1 << 18, (1 << 18) + 1023,
+    10, 69, 1023, 1024, 1025, 123321, 1 << 18, (1 << 18) + 1023,
 };
 
 const BUFFER_SIZE = 1 << 34;
@@ -45,60 +45,120 @@ pub fn main() anyerror!void {
     var prng = Prng.init(69);
     const rand = prng.random();
 
+    @setEvalBranchQuota(4096);
+
     inline for (TYPES) |T| {
         const input_b: []T = @ptrCast(input_buf);
         const output_b: []T = @ptrCast(output_buf);
 
-        inline for (DATASETS) |ds| {
-            ds(T).fill_input(input_b);
+        inline for (WIDTHS) |W| {
+            if (W > @bitSizeOf(T)) continue;
 
-            for (LENGTHS) |len| {
-                std.debug.print(
-                    "T={s}/DATASET={s}/LENGTH={}\n",
-                    .{
-                        @typeName(T),
-                        ds(T).name(),
-                        len,
-                    },
-                );
+            inline for (DATASETS) |ds| {
+                ds(T, W).fill_input(input_b);
 
-                inline for (ALGOS) |algo| {
-                    const alg = algo(T).init();
-                    defer alg.deinit();
-
-                    const res = try bench_one(T, alg, rand, len, input_b, compressed_buf, output_b);
-
+                for (LENGTHS) |len| {
                     std.debug.print(
-                        "ALGO={s}\tcompress={d:.3}GB/s\tdecompress={d:.3}GB/s\tratio={d}\n",
+                        "T={s}/DATASET={s}/LENGTH={}\n",
                         .{
-                            algo(T).name(),
-                            res.compress_gb_s,
-                            res.decompress_gb_s,
-                            res.ratio,
+                            @typeName(T),
+                            ds(T, W).name(),
+                            len,
                         },
                     );
-                }
 
-                std.debug.print("###########################\n", .{});
+                    inline for (ALGOS) |algo| {
+                        const alg = algo(T).init();
+                        defer alg.deinit();
+
+                        const res = try bench_one(T, alg, rand, len, input_b, compressed_buf, output_b);
+
+                        std.debug.print(
+                            "ALGO={s}\tcompress={d:.3}GB/s\tdecompress={d:.3}GB/s\tratio={d}\n",
+                            .{
+                                algo(T).name(),
+                                res.compress_gb_s,
+                                res.decompress_gb_s,
+                                res.ratio,
+                            },
+                        );
+                    }
+
+                    std.debug.print("###########################\n", .{});
+                }
             }
         }
     }
 }
 
-const DATASETS = .{Width7};
+const WIDTHS = .{
+    7, 15, 32, 33,
+};
 
-fn Width7(comptime T: type) type {
+const DATASETS = .{
+    Width,
+    DeltaWidth,
+    FrameWidth,
+};
+
+fn Width(comptime T: type, comptime W: comptime_int) type {
     return struct {
         fn fill_input(input: []T) void {
             var prng = Prng.init(0);
             const rand = prng.random();
             for (0..input.len) |i| {
-                input[i] = rand.int(u7);
+                input[i] = if (@bitSizeOf(T) > W) mask(T, W, rand.int(T)) else rand.int(T);
             }
         }
 
         fn name() []const u8 {
-            return "width7";
+            return std.fmt.comptimePrint("width{}", .{W});
+        }
+    };
+}
+
+fn mask(comptime T: type, comptime W: comptime_int, v: T) T {
+    const m: T = (1 << W) - 1;
+
+    if (@typeInfo(T).int.signedness == .signed) {
+        return (v << (@bitSizeOf(T) - W)) >> (@bitSizeOf(T) - W);
+    } else {
+        return v & m;
+    }
+}
+
+fn DeltaWidth(comptime T: type, comptime W: comptime_int) type {
+    return struct {
+        fn fill_input(input: []T) void {
+            var prng = Prng.init(0);
+            const rand = prng.random();
+            var val = rand.int(T);
+            for (0..input.len) |i| {
+                input[i] = val;
+                val +%= if (@bitSizeOf(T) > W) @intCast(@abs(mask(T, W, rand.int(T))) / 2) else rand.int(T);
+            }
+        }
+
+        fn name() []const u8 {
+            return std.fmt.comptimePrint("delta_width{}", .{W});
+        }
+    };
+}
+
+fn FrameWidth(comptime T: type, comptime W: comptime_int) type {
+    return struct {
+        fn fill_input(input: []T) void {
+            var prng = Prng.init(0);
+            const rand = prng.random();
+            var val = rand.int(T);
+            for (0..input.len) |i| {
+                input[i] = val;
+                val +%= if (@bitSizeOf(T) > W) mask(T, W, rand.int(T)) else rand.int(T);
+            }
+        }
+
+        fn name() []const u8 {
+            return std.fmt.comptimePrint("frame_width{}", .{W});
         }
     };
 }
@@ -437,7 +497,9 @@ fn bench_one(
 
         decompress_time_ns += t.lap();
 
-        std.debug.assert(std.mem.eql(T, input_slices[run_idx], output));
+        if (!std.mem.eql(T, input_slices[run_idx], output)) {
+            @panic("mismatch");
+        }
     }
 
     const total_size = @as(usize, len) * @sizeOf(T) * N_RUNS;
