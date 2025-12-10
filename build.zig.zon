@@ -11,4 +11,14 @@
         "README.md",
         "src",
     },
+    .dependencies = .{
+        .zstd = .{
+            .url = "https://github.com/allyourcodebase/zstd/archive/refs/tags/1.5.7.tar.gz",
+            .hash = "zstd-1.5.7-KEItkJ8vAAC5_rRlKmLflYQ-eKXbAIQBWZNmmJtS18q0",
+        },
+        .lz4 = .{
+            .url = "https://github.com/allyourcodebase/lz4/archive/refs/tags/1.10.0-6.tar.gz",
+            .hash = "lz4-1.10.0-6-ewyzw-4NAAAWDpY4xpiqr4LQhZQAC0x_rGnW2iPh6jk2",
+        },
+    },
 }

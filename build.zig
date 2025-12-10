@@ -4,6 +4,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const zstd = b.dependency("zstd", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const lz4 = b.dependency("lz4", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const zint = b.addModule("zint", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -42,6 +52,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     bench.root_module.addImport("zint", zint);
+    bench.root_module.linkLibrary(zstd.artifact("zstd"));
+    bench.root_module.linkLibrary(lz4.artifact("lz4"));
     const run_bench = b.addRunArtifact(bench);
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(&run_bench.step);

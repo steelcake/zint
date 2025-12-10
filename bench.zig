@@ -105,10 +105,44 @@ fn Width7(comptime T: type) type {
 
 const ALGOS = .{
     MemCopy,
+    Lz4,
     ZintBitpack,
     ZintForpack,
     ZintDeltapack,
 };
+
+fn Lz4(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        fn init() Self {
+            return .{};
+        }
+
+        fn deinit(self: Self) void {
+            _ = self;
+        }
+
+        fn compress_bound(self: Self, len: u32) u32 {
+            _ = self;
+            return @intCast(sys.LZ4_compressBound(@intCast(len * @sizeOf(T))));
+        }
+
+        fn compress(self: Self, noalias input: []const T, noalias output: []u8) anyerror!usize {
+            _ = self;
+            return try lz4_compress(@as([]const u8, @ptrCast(input)), output);
+        }
+
+        fn decompress(self: Self, noalias input: []const u8, noalias output: []T) anyerror!usize {
+            _ = self;
+            return try lz4_decompress(input, @as([]u8, @ptrCast(output)));
+        }
+
+        fn name() []const u8 {
+            return "lz4";
+        }
+    };
+}
 
 fn MemCopy(comptime T: type) type {
     return struct {
@@ -284,6 +318,7 @@ fn bench_one(
     const n_compressed = compressed_buf.len / bound;
 
     var compressed_indices: [N_RUNS]usize = undefined;
+    var compressed_sizes: [N_RUNS]usize = undefined;
     var input_slices: [N_RUNS][]const T = undefined;
 
     for (0..N_RUNS) |run_idx| {
@@ -308,7 +343,10 @@ fn bench_one(
 
         var t = timer();
 
-        compressed_len += try algo.compress(input, compressed);
+        const cl = try algo.compress(input, compressed);
+        compressed_len += cl;
+
+        compressed_sizes[run_idx] = cl;
 
         compress_time_ns += t.lap();
     }
@@ -317,7 +355,7 @@ fn bench_one(
 
     for (0..N_RUNS) |run_idx| {
         const compressed_idx = compressed_indices[run_idx];
-        const compressed = compressed_buf[bound * compressed_idx .. bound * (compressed_idx + 1)];
+        const compressed = compressed_buf[bound * compressed_idx .. bound * compressed_idx + compressed_sizes[run_idx]];
 
         const output = rand_slice(output_buf, rand, len);
 
@@ -346,4 +384,65 @@ fn bench_one(
 
 fn timer() std.time.Timer {
     return std.time.Timer.start() catch unreachable;
+}
+
+const sys = @cImport({
+    @cDefine("ZSTD_STATIC_LINKING_ONLY", "1");
+    @cInclude("zstd.h");
+    @cInclude("lz4.h");
+    @cInclude("lz4hc.h");
+});
+
+const CompressError = error{
+    CompressFail,
+};
+
+const DecompressError = error{
+    DecompressFail,
+};
+
+fn lz4_compress(src: []const u8, dst: []u8) CompressError!usize {
+    const lz4_size = sys.LZ4_compress_default(
+        @ptrCast(src.ptr),
+        @ptrCast(dst.ptr),
+        @intCast(src.len),
+        @intCast(dst.len),
+    );
+    if (lz4_size != 0) {
+        return @intCast(lz4_size);
+    } else {
+        return CompressError.CompressFail;
+    }
+}
+
+fn zstd_compress(ctx: *sys.ZSTD_CCtx, src: []const u8, dst: []u8, level: i32) CompressError!usize {
+    const res = sys.ZSTD_compressCCtx(ctx, dst.ptr, dst.len, src.ptr, src.len, level);
+    if (sys.ZSTD_isError(res) == 0) {
+        return res;
+    } else {
+        return CompressError.CompressFail;
+    }
+}
+
+fn zstd_decompress(ctx: *sys.ZSTD_DCtx, src: []const u8, dst: []u8) DecompressError!usize {
+    const res = sys.ZSTD_decompressDCtx(ctx, dst.ptr, dst.len, src.ptr, src.len);
+    if (sys.ZSTD_isError(res) != 0) {
+        return DecompressError.DecompressFail;
+    }
+
+    return @intCast(res);
+}
+
+fn lz4_decompress(src: []const u8, dst: []u8) DecompressError!usize {
+    const res = sys.LZ4_decompress_safe(
+        @ptrCast(src.ptr),
+        @ptrCast(dst.ptr),
+        @intCast(src.len),
+        @intCast(dst.len),
+    );
+    if (res < 0) {
+        return DecompressError.DecompressFail;
+    }
+
+    return @intCast(res);
 }
