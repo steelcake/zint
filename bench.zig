@@ -18,7 +18,7 @@ const LENGTHS: []const u32 = &.{
 
 const BUFFER_SIZE = 1 << 34;
 
-const N_RUNS = 100;
+const N_RUNS = 50;
 
 pub fn main() anyerror!void {
     const mem = try page_allocator.alloc(u8, BUFFER_SIZE);
@@ -32,15 +32,18 @@ pub fn main() anyerror!void {
 
     const ALIGN = comptime std.mem.Alignment.fromByteUnits(64);
 
-    const input_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 30);
+    const input_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 31);
     defer alloc.free(input_buf);
-    const output_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 30);
+    const output_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 31);
     defer alloc.free(output_buf);
     const compressed_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 31);
 
     @memset(input_buf, 69);
     @memset(output_buf, 69);
     @memset(compressed_buf, 69);
+
+    var prng = Prng.init(69);
+    const rand = prng.random();
 
     inline for (TYPES) |T| {
         const input_b: []T = @ptrCast(input_buf);
@@ -63,7 +66,7 @@ pub fn main() anyerror!void {
                     const alg = algo(T).init();
                     defer alg.deinit();
 
-                    const res = try bench_one(T, alg, len, input_b, compressed_buf, output_b);
+                    const res = try bench_one(T, alg, rand, len, input_b, compressed_buf, output_b);
 
                     std.debug.print(
                         "ALGO={s}\tcompress={d:.3}GB/s\tdecompress={d:.3}GB/s\tratio={d}\n",
@@ -100,7 +103,12 @@ fn Width7(comptime T: type) type {
     };
 }
 
-const ALGOS = .{ ZintBitpack, MemCopy };
+const ALGOS = .{
+    MemCopy,
+    ZintBitpack,
+    ZintForpack,
+    ZintDeltapack,
+};
 
 fn MemCopy(comptime T: type) type {
     return struct {
@@ -174,6 +182,80 @@ fn ZintBitpack(comptime T: type) type {
     };
 }
 
+fn ZintForpack(comptime T: type) type {
+    const Z = Zint(T);
+
+    return struct {
+        const Self = @This();
+
+        ctx: zint.Ctx,
+
+        fn init() Self {
+            return .{
+                .ctx = zint.Ctx.init(std.heap.page_allocator) catch unreachable,
+            };
+        }
+
+        fn deinit(self: Self) void {
+            self.ctx.deinit(std.heap.page_allocator);
+        }
+
+        fn compress_bound(self: Self, len: u32) u32 {
+            _ = self;
+            return Z.forpack_compress_bound(len);
+        }
+
+        fn compress(self: Self, noalias input: []const T, noalias output: []u8) anyerror!usize {
+            return try Z.forpack_compress(self.ctx, input, output);
+        }
+
+        fn decompress(self: Self, noalias input: []const u8, noalias output: []T) anyerror!usize {
+            return try Z.forpack_decompress(self.ctx, input, output);
+        }
+
+        fn name() []const u8 {
+            return "zint_forpack";
+        }
+    };
+}
+
+fn ZintDeltapack(comptime T: type) type {
+    const Z = Zint(T);
+
+    return struct {
+        const Self = @This();
+
+        ctx: zint.Ctx,
+
+        fn init() Self {
+            return .{
+                .ctx = zint.Ctx.init(std.heap.page_allocator) catch unreachable,
+            };
+        }
+
+        fn deinit(self: Self) void {
+            self.ctx.deinit(std.heap.page_allocator);
+        }
+
+        fn compress_bound(self: Self, len: u32) u32 {
+            _ = self;
+            return Z.deltapack_compress_bound(len);
+        }
+
+        fn compress(self: Self, noalias input: []const T, noalias output: []u8) anyerror!usize {
+            return try Z.deltapack_compress(self.ctx, input, output);
+        }
+
+        fn decompress(self: Self, noalias input: []const u8, noalias output: []T) anyerror!usize {
+            return try Z.deltapack_decompress(self.ctx, input, output);
+        }
+
+        fn name() []const u8 {
+            return "zint_deltapack";
+        }
+    };
+}
+
 const Result = struct {
     compress_gb_s: f64,
     decompress_gb_s: f64,
@@ -188,15 +270,13 @@ fn rand_slice(src: anytype, rand: Random, len: usize) @TypeOf(src) {
 fn bench_one(
     comptime T: type,
     algo: anytype,
+    rand: Random,
     len: u32,
     input_buf: []const T,
     compressed_buf: []u8,
     output_buf: []T,
 ) anyerror!Result {
     const bound = algo.compress_bound(len);
-
-    var prng = Prng.init(69);
-    const rand = prng.random();
 
     var compress_time_ns: u64 = 0;
     var compressed_len: usize = 0;
