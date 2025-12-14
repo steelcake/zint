@@ -4,6 +4,7 @@ const Random = std.Random;
 const page_allocator = std.heap.page_allocator;
 const Allocator = std.mem.Allocator;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
+const posix = std.posix;
 
 const zint = @import("zint");
 const Zint = zint.Zint;
@@ -58,11 +59,11 @@ const ALGOS = .{
 
 const BUFFER_SIZE = 1 << 34;
 
-const N_RUNS = 25;
+const N_RUNS = 1;
 
 pub fn main() anyerror!void {
-    const mem = try page_allocator.alloc(u8, BUFFER_SIZE);
-    defer page_allocator.free(mem);
+    const mem = alloc_thp(BUFFER_SIZE).?;
+    defer posix.munmap(mem);
 
     var fb_alloc = FixedBufferAllocator.init(mem);
     const alloc = fb_alloc.allocator();
@@ -78,11 +79,7 @@ pub fn main() anyerror!void {
     defer alloc.free(output_buf);
     const compressed_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 32);
 
-    @memset(input_buf, 69);
-    @memset(output_buf, 69);
-    @memset(compressed_buf, 69);
-
-    var prng = Prng.init(69);
+    var prng = Prng.init(0);
     const rand = prng.random();
 
     @setEvalBranchQuota(4096);
@@ -132,12 +129,13 @@ pub fn main() anyerror!void {
 }
 
 fn Width(comptime T: type, comptime W: comptime_int) type {
+    const U = std.meta.Int(@typeInfo(T).int.signedness, W);
     return struct {
         fn fill_input(input: []T) void {
             var prng = Prng.init(0);
             const rand = prng.random();
             for (0..input.len) |i| {
-                input[i] = if (@bitSizeOf(T) > W) mask(T, W, rand.int(T)) else rand.int(T);
+                input[i] = rand.int(U);
             }
         }
 
@@ -147,25 +145,17 @@ fn Width(comptime T: type, comptime W: comptime_int) type {
     };
 }
 
-fn mask(comptime T: type, comptime W: comptime_int, v: T) T {
-    const m: T = (1 << W) - 1;
-
-    if (@typeInfo(T).int.signedness == .signed) {
-        return (v << (@bitSizeOf(T) - W)) >> (@bitSizeOf(T) - W);
-    } else {
-        return v & m;
-    }
-}
-
 fn DeltaWidth(comptime T: type, comptime W: comptime_int) type {
+    const U = std.meta.Int(.unsigned, W - 1);
+
     return struct {
         fn fill_input(input: []T) void {
             var prng = Prng.init(0);
             const rand = prng.random();
-            var val = rand.int(T);
+            var val: T = 0;
             for (0..input.len) |i| {
                 input[i] = val;
-                val +%= if (@bitSizeOf(T) > W) @intCast(@abs(mask(T, W, rand.int(T))) / 2) else rand.int(T);
+                val +%= rand.int(U);
             }
         }
 
@@ -176,6 +166,8 @@ fn DeltaWidth(comptime T: type, comptime W: comptime_int) type {
 }
 
 fn FrameWidth(comptime T: type, comptime W: comptime_int) type {
+    const U = std.meta.Int(@typeInfo(T).int.signedness, W);
+
     return struct {
         fn fill_input(input: []T) void {
             var prng = Prng.init(0);
@@ -183,7 +175,7 @@ fn FrameWidth(comptime T: type, comptime W: comptime_int) type {
             var val = rand.int(T);
             for (0..input.len) |i| {
                 input[i] = val;
-                val +%= if (@bitSizeOf(T) > W) mask(T, W, rand.int(T)) else rand.int(T);
+                val +%= rand.int(U);
             }
         }
 
@@ -600,4 +592,32 @@ fn lz4_decompress(src: []const u8, dst: []u8) DecompressError!usize {
     }
 
     return @intCast(res);
+}
+
+fn alloc_thp(size: usize) ?[]align(1 << 12) u8 {
+    if (size == 0) {
+        return null;
+    }
+    const alloc_size = align_forward(size, 1 << 21);
+    const page = mmap_wrapper(alloc_size, 0) orelse return null;
+    posix.madvise(page.ptr, page.len, posix.MADV.HUGEPAGE) catch {
+        posix.munmap(page);
+        return null;
+    };
+    return page;
+}
+
+fn mmap_wrapper(size: usize, huge_page_flag: u32) ?[]align(1 << 12) u8 {
+    if (size == 0) {
+        return null;
+    }
+    const flags = posix.MAP{ .TYPE = .PRIVATE, .ANONYMOUS = true, .HUGETLB = huge_page_flag != 0, .POPULATE = true, .LOCKED = true };
+    const flags_int: u32 = @bitCast(flags);
+    const flags_f: posix.MAP = @bitCast(flags_int | huge_page_flag);
+    const page = posix.mmap(null, size, posix.PROT.READ | posix.PROT.WRITE, flags_f, -1, 0) catch return null;
+    return page;
+}
+
+pub fn align_forward(addr: usize, alignment: usize) usize {
+    return (addr +% alignment -% 1) & ~(alignment -% 1);
 }
