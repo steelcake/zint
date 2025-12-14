@@ -9,49 +9,49 @@ const zint = @import("zint");
 const Zint = zint.Zint;
 
 const TYPES = .{
-    // u8,
-    // i8,
-    // u16,
-    // i16,
+    u8,
+    i8,
+    u16,
+    i16,
     u32,
-    // i32,
-    // u64,
-    // i64,
-    // u128,
-    // i128,
-    // u256,
-    // i256,
+    i32,
+    u64,
+    i64,
+    u128,
+    i128,
+    u256,
+    i256,
 };
 
 const LENGTHS: []const u32 = &.{
-    // 10,
-    // 69,
-    // 1023,
-    // 1024,
-    // 1025,
-    // 123321,
+    10,
+    69,
+    1023,
+    1024,
+    1025,
+    123321,
     1 << 18,
-        // (1 << 18) + 1023,
+    (1 << 18) + 1023,
 };
 
 const WIDTHS = .{
     7,
     15,
-    // 32,
-    // 33,
+    32,
+    33,
 };
 
 const DATASETS = .{
-    // Width,
+    Width,
     DeltaWidth,
-    // FrameWidth,
+    FrameWidth,
 };
 
 const ALGOS = .{
     MemCopy,
     Lz4,
     Zstd,
-    // ZintBitpack,
+    ZintBitpack,
     ZintForpack,
     ZintDeltapack,
 };
