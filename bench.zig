@@ -9,11 +9,51 @@ const zint = @import("zint");
 const Zint = zint.Zint;
 
 const TYPES = .{
-    u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, u256, i256,
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+    u128,
+    i128,
+    u256,
+    i256,
 };
 
 const LENGTHS: []const u32 = &.{
-    10, 69, 1023, 1024, 1025, 123321, 1 << 18, (1 << 18) + 1023,
+    10,
+    69,
+    1023,
+    1024,
+    1025,
+    123321,
+    1 << 18,
+    (1 << 18) + 1023,
+};
+
+const WIDTHS = .{
+    7,
+    15,
+    32,
+    33,
+};
+
+const DATASETS = .{
+    Width,
+    DeltaWidth,
+    FrameWidth,
+};
+
+const ALGOS = .{
+    MemCopy,
+    Lz4,
+    Zstd,
+    ZintBitpack,
+    ZintForpack,
+    ZintDeltapack,
 };
 
 const BUFFER_SIZE = 1 << 34;
@@ -91,16 +131,6 @@ pub fn main() anyerror!void {
     }
 }
 
-const WIDTHS = .{
-    7, 15, 32, 33,
-};
-
-const DATASETS = .{
-    Width,
-    DeltaWidth,
-    FrameWidth,
-};
-
 fn Width(comptime T: type, comptime W: comptime_int) type {
     return struct {
         fn fill_input(input: []T) void {
@@ -162,15 +192,6 @@ fn FrameWidth(comptime T: type, comptime W: comptime_int) type {
         }
     };
 }
-
-const ALGOS = .{
-    MemCopy,
-    Lz4,
-    Zstd,
-    ZintBitpack,
-    ZintForpack,
-    ZintDeltapack,
-};
 
 const ZSTD_LEVEL = 1;
 
