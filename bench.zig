@@ -9,16 +9,56 @@ const zint = @import("zint");
 const Zint = zint.Zint;
 
 const TYPES = .{
-    u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, u256, i256,
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+    u128,
+    i128,
+    u256,
+    i256,
 };
 
 const LENGTHS: []const u32 = &.{
-    10, 69, 1023, 1024, 1025, 123321, 1 << 18, (1 << 18) + 1023,
+    10,
+    69,
+    1023,
+    1024,
+    1025,
+    123321,
+    1 << 18,
+    (1 << 18) + 1023,
+};
+
+const WIDTHS = .{
+    7,
+    15,
+    32,
+    33,
+};
+
+const DATASETS = .{
+    Width,
+    DeltaWidth,
+    FrameWidth,
+};
+
+const ALGOS = .{
+    MemCopy,
+    Lz4,
+    Zstd,
+    ZintBitpack,
+    ZintForpack,
+    ZintDeltapack,
 };
 
 const BUFFER_SIZE = 1 << 34;
 
-const N_RUNS = 50;
+const N_RUNS = 25;
 
 pub fn main() anyerror!void {
     const mem = try page_allocator.alloc(u8, BUFFER_SIZE);
@@ -32,11 +72,11 @@ pub fn main() anyerror!void {
 
     const ALIGN = comptime std.mem.Alignment.fromByteUnits(64);
 
-    const input_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 31);
+    const input_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 32);
     defer alloc.free(input_buf);
-    const output_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 31);
+    const output_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 32);
     defer alloc.free(output_buf);
-    const compressed_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 31);
+    const compressed_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 32);
 
     @memset(input_buf, 69);
     @memset(output_buf, 69);
@@ -90,16 +130,6 @@ pub fn main() anyerror!void {
         }
     }
 }
-
-const WIDTHS = .{
-    7, 15, 32, 33,
-};
-
-const DATASETS = .{
-    Width,
-    DeltaWidth,
-    FrameWidth,
-};
 
 fn Width(comptime T: type, comptime W: comptime_int) type {
     return struct {
@@ -162,15 +192,6 @@ fn FrameWidth(comptime T: type, comptime W: comptime_int) type {
         }
     };
 }
-
-const ALGOS = .{
-    MemCopy,
-    Lz4,
-    Zstd,
-    ZintBitpack,
-    ZintForpack,
-    ZintDeltapack,
-};
 
 const ZSTD_LEVEL = 1;
 
