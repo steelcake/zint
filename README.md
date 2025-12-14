@@ -34,7 +34,7 @@ std.debug.assert(compressed_size == consumed_size);
 std.debug.assert(std.mem.eql(T, output, input));
 ```
 
-# FastLanes
+## FastLanes
 
 Zint is based on the FastLanes integer compression.
 
@@ -44,7 +44,7 @@ The fastlanes implementation on this repo is ported from rust implementation of 
 - [original implementation](https://github.com/cwida/FastLanes) 
 - [rust implementation by spiraldb](https://github.com/spiraldb/fastlanes)
 
-# Benchmark Results
+## Benchmark Results
 
 Some example results are located in [./benchmark_results](./benchmark_results).
 
@@ -56,6 +56,14 @@ My interpretation of the benchmarks is that using the right Zint variant for rig
 Bitpacking and FrameOfReference+BitPacking almost match memcopy performance but Delta+Bitpacking is slower than memcopy.
 
 In terms of compression ratio, the right variant of Zint is better or on par with zstd(level 1) while lz4 tends to be worse.
+
+## avx512 
+
+Avx512 really hurts delta encoding/decoding performance on all cpus I tested with (ryzen desktop and epyc).
+
+So compiling with `-Dcpu=znver3` or just `-Dcpu=native-avx512f` greatly improves the performance.
+
+Similar setting on intel would be `-Dcpu=haswell` or `-Dcpu=native-avx512f`.
 
 ## License
 
