@@ -5,53 +5,54 @@ const page_allocator = std.heap.page_allocator;
 const Allocator = std.mem.Allocator;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const posix = std.posix;
+const Arenallocator = std.heap.ArenaAllocator;
 
 const zint = @import("zint");
 const Zint = zint.Zint;
 
 const TYPES = .{
-    u8,
-    i8,
-    u16,
-    i16,
+    // u8,
+    // i8,
+    // u16,
+    // i16,
     u32,
-    i32,
-    u64,
-    i64,
-    u128,
-    i128,
-    u256,
-    i256,
+    // i32,
+    // u64,
+    // i64,
+    // u128,
+    // i128,
+    // u256,
+    // i256,
 };
 
 const LENGTHS: []const u32 = &.{
-    10,
-    69,
-    1023,
-    1024,
-    1025,
-    123321,
-    1 << 18,
-    (1 << 18) + 1023,
+    // 10,
+    // 69,
+    // 1023,
+    // 1024,
+    // 1025,
+    // 123321,
+    1 << 12,
+    // (1 << 18) + 1023,
 };
 
 const WIDTHS = .{
-    7,
+    // 7,
     15,
-    32,
-    33,
+    // 32,
+    // 33,
 };
 
 const DATASETS = .{
     Width,
-    DeltaWidth,
-    FrameWidth,
+    // DeltaWidth,
+    // FrameWidth,
 };
 
 const ALGOS = .{
     MemCopy,
-    Lz4,
-    Zstd,
+    // Lz4,
+    // Zstd,
     ZintBitpack,
     ZintForpack,
     ZintDeltapack,
@@ -59,7 +60,7 @@ const ALGOS = .{
 
 const BUFFER_SIZE = 1 << 34;
 
-const N_RUNS = 1;
+const N_RUNS = 10;
 
 pub fn main() anyerror!void {
     const mem = alloc_thp(BUFFER_SIZE).?;
@@ -67,9 +68,6 @@ pub fn main() anyerror!void {
 
     var fb_alloc = FixedBufferAllocator.init(mem);
     const alloc = fb_alloc.allocator();
-
-    var ctx = try zint.Ctx.init(alloc);
-    defer ctx.deinit(alloc);
 
     const ALIGN = comptime std.mem.Alignment.fromByteUnits(64);
 
@@ -79,7 +77,7 @@ pub fn main() anyerror!void {
     defer alloc.free(output_buf);
     const compressed_buf = try alloc.alignedAlloc(u8, ALIGN, 1 << 32);
 
-    var prng = Prng.init(0);
+    var prng = Prng.init(105);
     const rand = prng.random();
 
     @setEvalBranchQuota(4096);
@@ -105,8 +103,11 @@ pub fn main() anyerror!void {
                     );
 
                     inline for (ALGOS) |algo| {
-                        const alg = algo(T).init();
-                        defer alg.deinit();
+                        var alg_arena = Arenallocator.init(alloc);
+                        defer alg_arena.deinit();
+                        const alg_alloc = alg_arena.allocator();
+                        const alg = algo(T).init(alg_alloc);
+                        defer alg.deinit(alg_alloc);
 
                         const res = try bench_one(T, alg, rand, len, input_b, compressed_buf, output_b);
 
@@ -197,9 +198,7 @@ fn Zstd(comptime T: type) type {
         zstd_dctx: *sys.ZSTD_DCtx,
         zstd_dstate: []align(8) u8,
 
-        fn init() Self {
-            const alloc = page_allocator;
-
+        fn init(alloc: Allocator) Self {
             const zstd_dctx_cap = sys.ZSTD_estimateDCtxSize();
 
             const zstd_dstate = alloc.alignedAlloc(
@@ -232,9 +231,9 @@ fn Zstd(comptime T: type) type {
             };
         }
 
-        fn deinit(self: Self) void {
-            page_allocator.free(self.zstd_dstate);
-            page_allocator.free(self.zstd_cstate);
+        fn deinit(self: Self, alloc: Allocator) void {
+            alloc.free(self.zstd_dstate);
+            alloc.free(self.zstd_cstate);
         }
 
         fn compress_bound(self: Self, len: u32) u32 {
@@ -260,11 +259,11 @@ fn Lz4(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        fn init() Self {
+        fn init(_: Allocator) Self {
             return .{};
         }
 
-        fn deinit(self: Self) void {
+        fn deinit(self: Self, _: Allocator) void {
             _ = self;
         }
 
@@ -293,11 +292,11 @@ fn MemCopy(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        fn init() Self {
+        fn init(_: Allocator) Self {
             return .{};
         }
 
-        fn deinit(self: Self) void {
+        fn deinit(self: Self, _: Allocator) void {
             _ = self;
         }
 
@@ -332,14 +331,14 @@ fn ZintBitpack(comptime T: type) type {
 
         ctx: zint.Ctx,
 
-        fn init() Self {
+        fn init(alloc: Allocator) Self {
             return .{
-                .ctx = zint.Ctx.init(std.heap.page_allocator) catch @panic("unreachable"),
+                .ctx = zint.Ctx.init(alloc) catch @panic("unreachable"),
             };
         }
 
-        fn deinit(self: Self) void {
-            self.ctx.deinit(std.heap.page_allocator);
+        fn deinit(self: Self, alloc: Allocator) void {
+            self.ctx.deinit(alloc);
         }
 
         fn compress_bound(self: Self, len: u32) u32 {
@@ -369,14 +368,14 @@ fn ZintForpack(comptime T: type) type {
 
         ctx: zint.Ctx,
 
-        fn init() Self {
+        fn init(alloc: Allocator) Self {
             return .{
-                .ctx = zint.Ctx.init(std.heap.page_allocator) catch @panic("unreachable"),
+                .ctx = zint.Ctx.init(alloc) catch @panic("unreachable"),
             };
         }
 
-        fn deinit(self: Self) void {
-            self.ctx.deinit(std.heap.page_allocator);
+        fn deinit(self: Self, alloc: Allocator) void {
+            self.ctx.deinit(alloc);
         }
 
         fn compress_bound(self: Self, len: u32) u32 {
@@ -406,14 +405,14 @@ fn ZintDeltapack(comptime T: type) type {
 
         ctx: zint.Ctx,
 
-        fn init() Self {
+        fn init(alloc: Allocator) Self {
             return .{
-                .ctx = zint.Ctx.init(std.heap.page_allocator) catch @panic("unreachable"),
+                .ctx = zint.Ctx.init(alloc) catch @panic("unreachable"),
             };
         }
 
-        fn deinit(self: Self) void {
-            self.ctx.deinit(std.heap.page_allocator);
+        fn deinit(self: Self, alloc: Allocator) void {
+            self.ctx.deinit(alloc);
         }
 
         fn compress_bound(self: Self, len: u32) u32 {
@@ -449,7 +448,7 @@ fn rand_slice(src: anytype, rand: Random, len: usize) @TypeOf(src) {
 fn bench_one(
     comptime T: type,
     algo: anytype,
-    rand: Random,
+    _: Random,
     len: u32,
     input_buf: []const T,
     compressed_buf: []u8,
@@ -460,31 +459,15 @@ fn bench_one(
     var compress_time_ns: u64 = 0;
     var compressed_len: usize = 0;
 
-    const n_compressed = compressed_buf.len / bound;
-
-    var compressed_indices: [N_RUNS]usize = undefined;
+    // var compressed_indices: [N_RUNS]usize = undefined;
     var compressed_sizes: [N_RUNS]usize = undefined;
     var input_slices: [N_RUNS][]const T = undefined;
 
     for (0..N_RUNS) |run_idx| {
-        const input = rand_slice(input_buf, rand, len);
+        const input = input_buf[run_idx * len..(run_idx + 1) * len];
         input_slices[run_idx] = input;
 
-        const compressed_idx = while (true) {
-            const idx = rand.int(usize) % n_compressed;
-
-            const found = for (0..run_idx) |i| {
-                if (compressed_indices[i] == idx) {
-                    break true;
-                }
-            } else false;
-
-            if (!found) {
-                compressed_indices[run_idx] = idx;
-                break idx;
-            }
-        };
-        const compressed = compressed_buf[bound * compressed_idx .. bound * (compressed_idx + 1)];
+        const compressed = compressed_buf[run_idx * bound .. (run_idx + 1) * bound];
 
         var t = timer();
 
@@ -499,10 +482,9 @@ fn bench_one(
     var decompress_time_ns: u64 = 0;
 
     for (0..N_RUNS) |run_idx| {
-        const compressed_idx = compressed_indices[run_idx];
-        const compressed = compressed_buf[bound * compressed_idx .. bound * compressed_idx + compressed_sizes[run_idx]];
+        const compressed = compressed_buf[bound * run_idx.. bound * run_idx + compressed_sizes[run_idx]];
 
-        const output = rand_slice(output_buf, rand, len);
+        const output = output_buf[run_idx * len..(run_idx + 1) * len];
 
         var t = timer();
 

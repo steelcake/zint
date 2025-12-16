@@ -32,6 +32,7 @@ pub fn FastLanes(comptime T: type) type {
     return struct {
         const N_BITS = @sizeOf(T) * 8;
         pub const N_LANES = 1024 / N_BITS;
+        const FACTOR = 8;
 
         fn mask(width: comptime_int) T {
             return (1 << width) - 1;
@@ -44,11 +45,14 @@ pub fn FastLanes(comptime T: type) type {
         ) void {
             for (0..N_LANES) |lane| {
                 var prev = base[lane];
-                inline for (0..N_BITS) |row| {
-                    const idx = index(row, lane);
-                    const next = input[idx];
-                    output[idx] = next -% prev;
-                    prev = next;
+                for (0..N_BITS/FACTOR) |r| {
+                    const row = r * FACTOR;
+                    for (0..FACTOR) |j| {
+                        const idx = index(row + j, lane);
+                        const next = input[idx];
+                        output[idx] = next -% prev;
+                        prev = next;
+                    }
                 }
             }
         }
@@ -60,11 +64,14 @@ pub fn FastLanes(comptime T: type) type {
         ) void {
             for (0..N_LANES) |lane| {
                 var prev = base[lane];
-                inline for (0..N_BITS) |row| {
-                    const idx = index(row, lane);
-                    const next = input[idx] +% prev;
-                    output[idx] = next;
-                    prev = next;
+                for (0..N_BITS/FACTOR) |r| {
+                    const row = r * FACTOR;
+                    for (0..FACTOR) |j| {
+                        const idx = index(row + j, lane);
+                        const next = input[idx] +% prev;
+                        output[idx] = next;
+                        prev = next;
+                    }
                 }
             }
         }
@@ -73,8 +80,12 @@ pub fn FastLanes(comptime T: type) type {
             noalias input: *const [1024]T,
             noalias output: *[1024]T,
         ) void {
-            for (0..1024) |i| {
-                output[i] = input[transpose_idx(i)];
+            const UNROLL = 16;
+            for (0..1024/UNROLL) |i| {
+                const ind = i * UNROLL;
+                inline for (0..UNROLL) |j| {
+                    output[ind + j] = input[transpose_idx(ind + j)];
+                }
             }
         }
 
@@ -82,8 +93,12 @@ pub fn FastLanes(comptime T: type) type {
             noalias input: *const [1024]T,
             noalias output: *[1024]T,
         ) void {
-            for (0..1024) |i| {
-                output[transpose_idx(i)] = input[i];
+            const UNROLL = 16;
+            for (0..1024/UNROLL) |i| {
+                const ind = i * UNROLL;
+                inline for (0..UNROLL) |j| {
+                    output[transpose_idx(ind + j)] = input[ind + j];
+                }
             }
         }
 
