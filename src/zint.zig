@@ -464,12 +464,12 @@ fn Impl256(comptime T: type) type {
             // number of bytes written so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
-            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
-            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
-            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -513,12 +513,12 @@ fn Impl256(comptime T: type) type {
             // number of bytes read so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
-            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
-            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
-            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -586,13 +586,13 @@ fn Impl256(comptime T: type) type {
             // number of bytes written so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
-            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
-            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
-            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const transposed_buf: *[1024]I = @ptrCast(transposed);
-            const delta_buf: *[1024]I = @ptrCast(delta);
+            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
+            const delta_buf: *align(ALIGNMENT) [1024]I = @ptrCast(delta);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -637,13 +637,13 @@ fn Impl256(comptime T: type) type {
             // number of bytes read so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
-            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
-            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
-            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
-            const transposed_buf: *[1024]I = @ptrCast(transposed);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
 
             if (n_remainder > 0) {
                 offset += try Inner.delta_decompress(
@@ -1572,12 +1572,9 @@ fn Impl(comptime T: type) type {
         /// Compress the input integers into the output buffer.
         /// `output` should be at least `delta_compress_bound(input.len)` BYTES.
         ///
-        /// `transposed` and `delta` inputs are for using as internal scratch memory.
-        ///
         /// Returns the number of bytes written to the output.
         fn delta_compress(
-            noalias transposed: *[1024]T,
-            noalias delta: *[1024]T,
+            noalias scratch: *align(ALIGNMENT) [2048]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -1608,11 +1605,12 @@ fn Impl(comptime T: type) type {
             // number of T written so far, NOT number of bytes
             var offset: usize = 0;
 
+            const scratch_a: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[0..1024]);
+            const scratch_b: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[1024..2048]);
+
             // write remainder data
             if (n_remainder > 0) {
-                // use the delta buffer for zigzag
-                const scratch = delta;
-                const remainder_data = load_remainder(input[0..n_remainder], scratch[0..n_remainder]);
+                const remainder_data = load_remainder(input[0..n_remainder], scratch_a, scratch_b);
 
                 const base = remainder_data[0];
 
@@ -1634,13 +1632,15 @@ fn Impl(comptime T: type) type {
                 const n_written = SPack.delta_bitpack(
                     base,
                     remainder_data,
-                    out[offset..],
+                    scratch_a,
                     width,
                 ) catch {
                     @panic("failed scalar pack, this should never happen");
                 };
+
+                @memcpy(out[offset .. offset + n_written], scratch_a[0..n_written]);
                 std.debug.assert(n_written == remainder_packed_len);
-                offset += remainder_packed_len;
+                offset += n_written;
             } else {
                 output[0] = 0;
 
@@ -1651,31 +1651,29 @@ fn Impl(comptime T: type) type {
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (0..n_whole_blocks) |block_idx| {
-                // use delta for doing zigzag
-                // can't use transpose for it because we will write from the zigzag buffer into
-                // transpose
-                const block = load_block(&input_blocks[block_idx], delta);
+                const block = load_block(&input_blocks[block_idx], scratch_a, scratch_b);
 
-                const transposed_buf: *[1024]U = @ptrCast(transposed);
-                const delta_buf: *[1024]U = @ptrCast(delta);
+                FL.transpose(block, scratch_a);
 
-                FL.transpose(block, transposed_buf);
+                const bases: *const [FL.N_LANES]U = scratch_a[0..FL.N_LANES];
 
-                const bases: *const [FL.N_LANES]U = transposed_buf[0..FL.N_LANES];
+                {
+                    const out_o = out[offset..];
+                    out_o[0..FL.N_LANES].* = bases.*;
+                    offset += FL.N_LANES;
+                }
 
-                FL.delta(transposed_buf, bases, delta_buf);
+                FL.delta(scratch_a, bases, scratch_b);
 
-                const max = max1024(delta_buf);
+                const max = max1024(scratch_b);
                 const width = needed_width(max);
 
                 output[1 + block_idx] = width;
 
-                for (0..FL.N_LANES) |i| {
-                    out[offset + i] = bases[i];
-                }
-                offset += FL.N_LANES;
+                const n_written = FL.dyn_bit_pack(scratch_b, scratch_a, width);
 
-                offset += FL.dyn_bit_pack(delta_buf, out[offset..], width);
+                @memcpy(out[offset .. offset + n_written], scratch_a[0..n_written]);
+                offset += n_written;
             }
 
             return byte_offset + N_BYTES * offset;
@@ -1683,8 +1681,7 @@ fn Impl(comptime T: type) type {
 
         /// Returns the number of bytes decompressed from the `input`
         fn delta_decompress(
-            noalias scratch: *[1024]T,
-            noalias transposed: *[1024]T,
+            noalias scratch: *align(ALIGNMENT) [2048]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -1727,6 +1724,9 @@ fn Impl(comptime T: type) type {
 
             const data_section: []align(1) const U = @ptrCast(data_section_bytes[0 .. total_packed_len * N_BYTES]);
 
+            const scratch_a: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[0..1024]);
+            const scratch_b: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[1024..2048]);
+
             // number of T read so far, NOT number of bytes
             var offset: usize = 0;
 
@@ -1736,23 +1736,24 @@ fn Impl(comptime T: type) type {
                 offset += 1;
 
                 if (IS_SIGNED) {
-                    const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
                     const n_read = try SPack.delta_unpack(
                         base,
                         data_section[offset .. offset + remainder_packed_len],
-                        zigzagged,
+                        scratch_a,
                         remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
-                    ZigZag(T).decode(zigzagged, output[0..n_remainder]);
+                    ZigZag(T).decode(scratch_a[0..n_remainder], @ptrCast(scratch_b[0..n_remainder]));
+                    @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
                 } else {
                     const n_read = try SPack.delta_unpack(
                         base,
                         data_section[offset .. offset + remainder_packed_len],
-                        output[0..n_remainder],
+                        scratch_b,
                         remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
+                    @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
                 }
                 offset += remainder_packed_len;
             } else {
@@ -1762,22 +1763,29 @@ fn Impl(comptime T: type) type {
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
                 const width = block_widths[block_idx];
+                const packed_len = FL.packed_len(width);
 
                 const bases_p = data_section[offset..];
-                const bases: *align(1) const [FL.N_LANES]U = bases_p[0..FL.N_LANES];
+                const bases: [FL.N_LANES]U align(ALIGNMENT) = bases_p[0..FL.N_LANES].*;
                 offset += FL.N_LANES;
 
-                const transposed_buf: *[1024]U = @ptrCast(transposed);
+                const packed_data = data_section[offset .. offset + packed_len];
+                offset += packed_len;
+
+                @memcpy(scratch_a[0..packed_data.len], packed_data);
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 if (IS_SIGNED) {
-                    const zigzagged: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
-                    FL.untranspose(transposed_buf, zigzagged);
-                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
+                    offset += FL.dyn_undelta_pack(scratch_a[0..packed_len], &bases, scratch_b, width);
+                    FL.untranspose(scratch_b, scratch_a);
+
+                    const o: *align(ALIGNMENT) const [1024]T = @ptrCast(scratch_b);
+                    ZigZag(T).decode1024(scratch_a, o);
+                    out_offset[0..1024].* = o.*;
                 } else {
-                    offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
-                    FL.untranspose(transposed_buf, out_offset[0..1024]);
+                    offset += FL.dyn_undelta_pack(scratch_a[0..packed_len], bases, scratch_b, width);
+                    FL.untranspose(scratch_b, scratch_a);
+                    out_offset[0..1024].* = @bitCast(scratch_a.*);
                 }
             }
 
@@ -1812,25 +1820,39 @@ fn Impl(comptime T: type) type {
         }
 
         /// Load input data, apply zigzag encoding if needed
-        fn load_remainder(input: []const T, scratch: []T) []const U {
-            std.debug.assert(input.len == scratch.len);
+        fn load_remainder(
+            noalias input: []const T,
+            noalias scratch: *align(ALIGNMENT) [1024]U,
+            noalias in: *align(ALIGNMENT) [1024]U,
+        ) []align(ALIGNMENT) const U {
+            std.debug.assert(input.len < 1024);
+
             if (IS_SIGNED) {
-                const zigzagged: []U = @ptrCast(scratch);
-                ZigZag(T).encode(input, zigzagged);
+                const scratch_t: *align(ALIGNMENT) [1024]T = @ptrCast(scratch);
+                @memcpy(scratch_t[0..input.len], input);
+                const zigzagged: []align(ALIGNMENT) U = in[0..input.len];
+                ZigZag(T).encode(scratch_t[0..input.len], zigzagged);
                 return zigzagged;
             } else {
-                return @ptrCast(input);
+                @memcpy(in[0..input.len], @as([]const U, @ptrCast(input)));
+                return in[0..input.len];
             }
         }
 
         /// Load input data, apply zigzag encoding if needed
-        fn load_block(input: *const [1024]T, scratch: *[1024]T) *const [1024]U {
+        fn load_block(
+            noalias input: *const [1024]T,
+            noalias scratch: *align(ALIGNMENT) [1024]U,
+            noalias in: *align(ALIGNMENT) [1024]U,
+        ) *align(ALIGNMENT) const [1024]U {
             if (IS_SIGNED) {
-                const zigzagged: *[1024]U = @ptrCast(scratch);
-                ZigZag(T).encode(input, zigzagged);
-                return zigzagged;
+                const scratch_t: *align(ALIGNMENT) [1024]T = @ptrCast(scratch);
+                scratch_t.* = input.*;
+                ZigZag(T).encode1024(scratch_t, in);
+                return in;
             } else {
-                return @ptrCast(input);
+                in.* = @bitCast(input.*);
+                return in;
             }
         }
     };

@@ -167,13 +167,17 @@ pub fn FastLanes(comptime T: type) type {
             unreachable;
         }
 
+        pub fn packed_len(width: u8) usize {
+            return 1024 / N_BITS * width;
+        }
+
         pub fn Packer(comptime W: comptime_int) type {
             if (W > N_BITS) {
                 @compileError("W can't be bigger than N_BITS");
             }
 
             return struct {
-                const PACKED_LEN = 1024 * W / N_BITS;
+                const PACKED_LEN = packed_len(W);
 
                 inline fn pack(
                     ctx: anytype,
