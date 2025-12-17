@@ -1509,13 +1509,7 @@ fn Impl(comptime T: type) type {
                 );
                 std.debug.assert(n_read == remainder_packed_len);
 
-                if (IS_SIGNED) {
-                    ZigZag(T).decode(scratch_b[0..n_remainder], @ptrCast(scratch_a[0..n_remainder]));
-                    @memcpy(output[0..n_remainder], scratch_a[0..n_remainder]);
-                } else {
-                    @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
-                }
-                offset += remainder_packed_len;
+                store_remainder(scratch_b[0..n_remainder], scratch_a, output[0..n_remainder]);
             } else {
                 // as if we read remainder data min value
                 offset += 1;
@@ -1524,28 +1518,26 @@ fn Impl(comptime T: type) type {
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
                 const width = block_widths[block_idx];
+                const packed_len = FL.packed_len(width);
 
                 const ref = data_section[offset];
                 offset += 1;
 
+                const packed_data = data_section[offset .. offset + packed_len];
+                offset += packed_len;
+
+                @memcpy(scratch_a[0..packed_data.len], packed_data);
+
+                const pl = FL.dyn_for_unpack(
+                    scratch_a[0..packed_len],
+                    ref,
+                    scratch_b,
+                    width,
+                );
+                std.debug.assert(pl == packed_len);
+
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-                if (IS_SIGNED) {
-                    const zigzagged: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_for_unpack(
-                        data_section[offset..],
-                        ref,
-                        zigzagged,
-                        width,
-                    );
-                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
-                } else {
-                    offset += FL.dyn_for_unpack(
-                        data_section[offset..],
-                        ref,
-                        out_offset[0..1024],
-                        width,
-                    );
-                }
+                store_block(scratch_b, scratch_a, out_offset[0..1024]);
             }
 
             std.debug.assert(offset == total_packed_len);
@@ -1774,7 +1766,9 @@ fn Impl(comptime T: type) type {
 
                 @memcpy(scratch_a[0..packed_data.len], packed_data);
 
-                offset += FL.dyn_undelta_pack(scratch_a[0..packed_len], bases, scratch_b, width);
+                const pl = FL.dyn_undelta_pack(scratch_a[0..packed_len], bases, scratch_b, width);
+                std.debug.assert(pl == packed_len);
+
                 FL.untranspose(scratch_b, scratch_a);
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
