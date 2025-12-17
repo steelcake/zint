@@ -1360,7 +1360,7 @@ fn Impl(comptime T: type) type {
         ///
         /// Returns the number of bytes written to the output.
         fn forpack_compress(
-            noalias scratch: *[1024]T,
+            noalias scratch: *align(ALIGNMENT) [2048]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -1391,27 +1391,32 @@ fn Impl(comptime T: type) type {
             // number of T written so far, NOT number of bytes
             var offset: usize = 0;
 
+            const scratch_a: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[0..1024]);
+            const scratch_b: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[1024..2048]);
+
             // write remainder data
             if (n_remainder > 0) {
-                const remainder_data = load_remainder(input[0..n_remainder], scratch[0..n_remainder]);
+                load_remainder(input[0..n_remainder], scratch_a, scratch_b[0..n_remainder]);
 
-                const min, const max = std.mem.minMax(U, remainder_data);
+                const min, const max = std.mem.minMax(U, scratch_b[0..n_remainder]);
                 const width = needed_width(max - min);
 
                 output[0] = width;
 
-                out[0] = min;
+                out[offset] = min;
                 offset += 1;
 
                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
                 const n_written = SPack.bitpack(
-                    remainder_data,
+                    scratch_b[0..n_remainder],
                     min,
-                    out[offset..],
+                    scratch_a,
                     width,
                 ) catch {
                     @panic("failed scalar pack, this should never happen");
                 };
+
+                @memcpy(out[offset .. offset + n_written], scratch_a[0..n_written]);
                 std.debug.assert(n_written == remainder_packed_len);
                 offset += remainder_packed_len;
             } else {
@@ -1424,9 +1429,9 @@ fn Impl(comptime T: type) type {
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (0..n_whole_blocks) |block_idx| {
-                const block = load_block(&input_blocks[block_idx], scratch);
+                load_block(&input_blocks[block_idx], scratch_a, scratch_b);
 
-                const min, const max = minmax1024(block);
+                const min, const max = minmax1024(scratch_b);
                 const width = needed_width(max - min);
 
                 output[1 + block_idx] = width;
@@ -1434,7 +1439,10 @@ fn Impl(comptime T: type) type {
                 out[offset] = min;
                 offset += 1;
 
-                offset += FL.dyn_for_pack(block, min, out[offset..], width);
+                const n_written = FL.dyn_for_pack(scratch_b, min, scratch_a, width);
+
+                @memcpy(out[offset .. offset + n_written], scratch_a[0..n_written]);
+                offset += n_written;
             }
 
             return byte_offset + N_BYTES * offset;
