@@ -1163,7 +1163,7 @@ fn Impl(comptime T: type) type {
         ///
         /// Returns the number of bytes written to the output.
         fn bitpack_compress(
-            noalias scratch: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [2048]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -1194,29 +1194,31 @@ fn Impl(comptime T: type) type {
             // number of T written so far, NOT number of bytes
             var offset: usize = 0;
 
+            const scratch_a: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[0..1024]);
+            const scratch_b: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[1024..2048]);
+
             // write remainder data
             if (n_remainder > 0) {
-                const remainder_data = load_remainder(
-                    input[0..n_remainder],
-                    scratch[0..n_remainder],
-                );
+                load_remainder(input[0..n_remainder], scratch_a, scratch_b[0..n_remainder]);
 
-                const max = std.mem.max(U, remainder_data);
+                const max = std.mem.max(U, scratch_b[0..n_remainder]);
                 const width = needed_width(max);
 
                 output[0] = width;
 
                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
                 const n_written = SPack.bitpack(
-                    remainder_data,
+                    scratch_b[0..n_remainder],
                     0,
-                    out,
+                    scratch_a,
                     width,
                 ) catch {
                     @panic("failed scalar pack, this should never happen");
                 };
+
+                @memcpy(out[offset .. offset + n_written], scratch_a[0..n_written]);
                 std.debug.assert(n_written == remainder_packed_len);
-                offset += remainder_packed_len;
+                offset += n_written;
             } else {
                 output[0] = 0;
             }
@@ -1224,14 +1226,17 @@ fn Impl(comptime T: type) type {
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (0..n_whole_blocks) |block_idx| {
-                const block = load_block(&input_blocks[block_idx], scratch);
+                load_block(&input_blocks[block_idx], scratch_a, scratch_b);
 
-                const max = max1024(block);
+                const max = max1024(scratch_b);
                 const width = needed_width(max);
 
                 output[1 + block_idx] = width;
 
-                offset += FL.dyn_bit_pack(block, out[offset..], width);
+                const n_written = FL.dyn_bit_pack(scratch_b, scratch_a, width);
+
+                @memcpy(out[offset .. offset + n_written], scratch_a[0..n_written]);
+                offset += n_written;
             }
 
             return byte_offset + N_BYTES * offset;
@@ -1239,7 +1244,7 @@ fn Impl(comptime T: type) type {
 
         /// Returns the number of bytes decompressed from the `input`
         fn bitpack_decompress(
-            noalias scratch: *[1024]T,
+            noalias scratch: *align(ALIGNMENT) [2048]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -1285,50 +1290,46 @@ fn Impl(comptime T: type) type {
             // number of T read so far, NOT number of bytes
             var offset: usize = 0;
 
+            const scratch_a: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[0..1024]);
+            const scratch_b: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[1024..2048]);
+
             // read remainder data
             if (n_remainder > 0) {
-                if (IS_SIGNED) {
-                    const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
-                    const n_read = try SPack.bitunpack(
-                        data_section[0..remainder_packed_len],
-                        0,
-                        zigzagged,
-                        remainder_width,
-                    );
-                    std.debug.assert(n_read == remainder_packed_len);
-                    ZigZag(T).decode(zigzagged, output[0..n_remainder]);
-                } else {
-                    const n_read = try SPack.bitunpack(
-                        data_section[0..remainder_packed_len],
-                        0,
-                        output[0..n_remainder],
-                        remainder_width,
-                    );
-                    std.debug.assert(n_read == remainder_packed_len);
-                }
+                const remainder_packed = data_section[offset .. offset + remainder_packed_len];
                 offset += remainder_packed_len;
+
+                @memcpy(scratch_a[0..remainder_packed_len], remainder_packed);
+
+                const n_read = try SPack.bitunpack(
+                    scratch_a[0..remainder_packed_len],
+                    0,
+                    scratch_b[0..n_remainder],
+                    remainder_width,
+                );
+                std.debug.assert(n_read == remainder_packed_len);
+
+                store_remainder(
+                    scratch_b[0..n_remainder],
+                    scratch_a,
+                    output[0..n_remainder],
+                );
             }
 
             // Read whole blocks
             for (0..n_whole_blocks) |block_idx| {
                 const width = block_widths[block_idx];
+                const packed_len = FL.packed_len(width);
+
+                const packed_data = data_section[offset .. offset + packed_len];
+                offset += packed_len;
+
+                @memcpy(scratch_a[0..packed_data.len], packed_data);
+
+                const pl = FL.dyn_bit_unpack(scratch_a[0..packed_len], scratch_b, width);
+                std.debug.assert(pl == packed_len);
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-                if (IS_SIGNED) {
-                    const zigzagged: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_bit_unpack(
-                        data_section[offset..],
-                        zigzagged,
-                        width,
-                    );
-                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
-                } else {
-                    offset += FL.dyn_bit_unpack(
-                        data_section[offset..],
-                        out_offset[0..1024],
-                        width,
-                    );
-                }
+                store_block(scratch_b, scratch_a, out_offset[0..1024]);
             }
 
             std.debug.assert(offset == total_packed_len);
