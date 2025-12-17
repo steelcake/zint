@@ -1273,13 +1273,15 @@ fn Impl(comptime T: type) type {
                     std.debug.assert(n_read == remainder_packed_len);
                     ZigZag(T).decode(zigzagged, output[0..n_remainder]);
                 } else {
+                    const scratch_u: []U = @ptrCast(scratch[0..n_remainder]);
                     const n_read = try SPack.bitunpack(
                         data_section[0..remainder_packed_len],
                         0,
-                        output[0..n_remainder],
+                        scratch_u,
                         remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
+                    @memcpy(output[0..n_remainder], scratch_u[0..n_remainder]);
                 }
                 offset += remainder_packed_len;
             }
@@ -1298,11 +1300,13 @@ fn Impl(comptime T: type) type {
                     );
                     ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
                 } else {
+                    const scratch_u: *[1024]U = @ptrCast(scratch);
                     offset += FL.dyn_bit_unpack(
                         data_section[offset..],
-                        out_offset[0..1024],
+                        scratch_u,
                         width,
                     );
+                    out_offset[0..1024].* = scratch_u.*;
                 }
             }
 
@@ -1479,13 +1483,15 @@ fn Impl(comptime T: type) type {
                     std.debug.assert(n_read == remainder_packed_len);
                     ZigZag(T).decode(zigzagged, output[0..n_remainder]);
                 } else {
+                    const scratch_u: []U = @ptrCast(scratch[0..n_remainder]);
                     const n_read = try SPack.bitunpack(
                         data_section[offset .. offset + remainder_packed_len],
                         ref,
-                        output[0..n_remainder],
+                        scratch_u,
                         remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
+                    @memcpy(output[0..n_remainder], scratch_u);
                 }
                 offset += remainder_packed_len;
             } else {
@@ -1511,12 +1517,14 @@ fn Impl(comptime T: type) type {
                     );
                     ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
                 } else {
+                    const scratch_u: *[1024]U = @ptrCast(scratch);
                     offset += FL.dyn_for_unpack(
                         data_section[offset..],
                         ref,
-                        out_offset[0..1024],
+                        scratch_u,
                         width,
                     );
+                    out_offset[0..1024].* = scratch_u.*;
                 }
             }
 
@@ -1721,13 +1729,15 @@ fn Impl(comptime T: type) type {
                     std.debug.assert(n_read == remainder_packed_len);
                     ZigZag(T).decode(zigzagged, output[0..n_remainder]);
                 } else {
+                    const scratch_u: []U = @ptrCast(scratch[0..n_remainder]);
                     const n_read = try SPack.delta_unpack(
                         base,
                         data_section[offset .. offset + remainder_packed_len],
-                        output[0..n_remainder],
+                        scratch_u,
                         remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
+                    @memcpy(output[0..n_remainder], scratch_u);
                 }
                 offset += remainder_packed_len;
             } else {
@@ -1751,8 +1761,10 @@ fn Impl(comptime T: type) type {
                     FL.untranspose(transposed_buf, zigzagged);
                     ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
                 } else {
+                    const scratch_u: *[1024]U = @ptrCast(scratch);
                     offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
-                    FL.untranspose(transposed_buf, out_offset[0..1024]);
+                    FL.untranspose(transposed_buf, scratch_u);
+                    out_offset[0..1024].* = scratch_u.*;
                 }
             }
 
