@@ -1496,23 +1496,24 @@ fn Impl(comptime T: type) type {
                 const ref = data_section[offset];
                 offset += 1;
 
+                const remainder_packed = data_section[offset .. offset + remainder_packed_len];
+                offset += remainder_packed_len;
+
+                @memcpy(scratch_a[0..remainder_packed_len], remainder_packed);
+
+                const n_read = try SPack.bitunpack(
+                    scratch_a[0..remainder_packed_len],
+                    ref,
+                    scratch_b[0..n_remainder],
+                    remainder_width,
+                );
+                std.debug.assert(n_read == remainder_packed_len);
+
                 if (IS_SIGNED) {
-                    const n_read = try SPack.bitunpack(
-                        data_section[offset .. offset + remainder_packed_len],
-                        ref,
-                        scratch_a,
-                        remainder_width,
-                    );
-                    std.debug.assert(n_read == remainder_packed_len);
-                    ZigZag(T).decode(zigzagged, output[0..n_remainder]);
+                    ZigZag(T).decode(scratch_b[0..n_remainder], @ptrCast(scratch_a[0..n_remainder]));
+                    @memcpy(output[0..n_remainder], scratch_a[0..n_remainder]);
                 } else {
-                    const n_read = try SPack.bitunpack(
-                        data_section[offset .. offset + remainder_packed_len],
-                        ref,
-                        output[0..n_remainder],
-                        remainder_width,
-                    );
-                    std.debug.assert(n_read == remainder_packed_len);
+                    @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
                 }
                 offset += remainder_packed_len;
             } else {
@@ -1750,12 +1751,11 @@ fn Impl(comptime T: type) type {
                 );
                 std.debug.assert(n_read == remainder_packed_len);
 
-                if (IS_SIGNED) {
-                    ZigZag(T).decode(scratch_b[0..n_remainder], @ptrCast(scratch_a[0..n_remainder]));
-                    @memcpy(output[0..n_remainder], scratch_a[0..n_remainder]);
-                } else {
-                    @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
-                }
+                store_remainder(
+                    scratch_b[0..n_remainder],
+                    scratch_a,
+                    output[0..n_remainder],
+                );
             } else {
                 offset += 1;
             }
@@ -1778,12 +1778,7 @@ fn Impl(comptime T: type) type {
                 FL.untranspose(scratch_b, scratch_a);
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-                if (IS_SIGNED) {
-                    ZigZag(T).decode1024(scratch_a, @ptrCast(scratch_b));
-                    out_offset[0..1024].* = @bitCast(scratch_b.*);
-                } else {
-                    out_offset[0..1024].* = @bitCast(scratch_a.*);
-                }
+                store_block(scratch_a, scratch_b, out_offset[0..1024]);
             }
 
             std.debug.assert(offset == total_packed_len);
@@ -1814,6 +1809,37 @@ fn Impl(comptime T: type) type {
 
         fn needed_width(range: U) u7 {
             return N_BITS - @clz(range);
+        }
+
+        /// Store input data into `output`, apply zigzag decoding if needed
+        fn store_remainder(
+            noalias out: []align(ALIGNMENT) const U,
+            noalias scratch: *align(ALIGNMENT) [1024]U,
+            noalias output: []T,
+        ) void {
+            std.debug.assert(out.len < 1024);
+            std.debug.assert(out.len == output.len);
+
+            if (IS_SIGNED) {
+                ZigZag(T).decode(out, @ptrCast(scratch));
+                @memcpy(output, scratch);
+            } else {
+                @memcpy(output, out);
+            }
+        }
+
+        /// Store input data into `output`, apply zigzag decoding if needed
+        fn store_block(
+            noalias out: *align(ALIGNMENT) const [1024]U,
+            noalias scratch: *align(ALIGNMENT) [1024]U,
+            noalias output: *[1024]T,
+        ) void {
+            if (IS_SIGNED) {
+                ZigZag(T).decode1024(out, @ptrCast(scratch));
+                output.* = @bitCast(scratch.*);
+            } else {
+                output.* = @bitCast(out.*);
+            }
         }
 
         /// Load input data into `in`, apply zigzag encoding if needed
