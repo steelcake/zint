@@ -1442,7 +1442,7 @@ fn Impl(comptime T: type) type {
 
         /// Returns the number of bytes decompressed from the `input`
         fn forpack_decompress(
-            noalias scratch: *[1024]T,
+            noalias scratch: *align(ALIGNMENT) [2048]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -1488,17 +1488,19 @@ fn Impl(comptime T: type) type {
             // number of T read so far, NOT number of bytes
             var offset: usize = 0;
 
+            const scratch_a: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[0..1024]);
+            const scratch_b: *align(ALIGNMENT) [1024]U = @ptrCast(scratch[1024..2048]);
+
             // read remainder data
             if (n_remainder > 0) {
                 const ref = data_section[offset];
                 offset += 1;
 
                 if (IS_SIGNED) {
-                    const zigzagged: []U = @ptrCast(scratch[0..n_remainder]);
                     const n_read = try SPack.bitunpack(
                         data_section[offset .. offset + remainder_packed_len],
                         ref,
-                        zigzagged,
+                        scratch_a,
                         remainder_width,
                     );
                     std.debug.assert(n_read == remainder_packed_len);
@@ -1610,13 +1612,13 @@ fn Impl(comptime T: type) type {
 
             // write remainder data
             if (n_remainder > 0) {
-                const remainder_data = load_remainder(input[0..n_remainder], scratch_a, scratch_b);
+                load_remainder(input[0..n_remainder], scratch_a, scratch_b[0..n_remainder]);
 
-                const base = remainder_data[0];
+                const base = scratch_b[0];
 
                 var prev: U = base;
                 var max_delta: U = 0;
-                for (remainder_data) |v| {
+                for (scratch_b[0..n_remainder]) |v| {
                     const d = v -% prev;
                     max_delta = @max(max_delta, d);
                     prev = v;
@@ -1631,7 +1633,7 @@ fn Impl(comptime T: type) type {
                 const remainder_packed_len = (@as(u64, width) * n_remainder + N_BITS - 1) / N_BITS;
                 const n_written = SPack.delta_bitpack(
                     base,
-                    remainder_data,
+                    scratch_b[0..n_remainder],
                     scratch_a,
                     width,
                 ) catch {
@@ -1651,9 +1653,9 @@ fn Impl(comptime T: type) type {
             // Write whole blocks
             const input_blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (0..n_whole_blocks) |block_idx| {
-                const block = load_block(&input_blocks[block_idx], scratch_a, scratch_b);
+                load_block(&input_blocks[block_idx], scratch_a, scratch_b);
 
-                FL.transpose(block, scratch_a);
+                FL.transpose(scratch_b, scratch_a);
 
                 const bases: *const [FL.N_LANES]U = scratch_a[0..FL.N_LANES];
 
@@ -1735,27 +1737,25 @@ fn Impl(comptime T: type) type {
                 const base = data_section[0];
                 offset += 1;
 
+                const remainder_packed = data_section[offset .. offset + remainder_packed_len];
+                offset += remainder_packed_len;
+
+                @memcpy(scratch_a[0..remainder_packed_len], remainder_packed);
+
+                const n_read = try SPack.delta_unpack(
+                    base,
+                    scratch_a[0..remainder_packed_len],
+                    scratch_b[0..n_remainder],
+                    remainder_width,
+                );
+                std.debug.assert(n_read == remainder_packed_len);
+
                 if (IS_SIGNED) {
-                    const n_read = try SPack.delta_unpack(
-                        base,
-                        data_section[offset .. offset + remainder_packed_len],
-                        scratch_a,
-                        remainder_width,
-                    );
-                    std.debug.assert(n_read == remainder_packed_len);
-                    ZigZag(T).decode(scratch_a[0..n_remainder], @ptrCast(scratch_b[0..n_remainder]));
-                    @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
+                    ZigZag(T).decode(scratch_b[0..n_remainder], @ptrCast(scratch_a[0..n_remainder]));
+                    @memcpy(output[0..n_remainder], scratch_a[0..n_remainder]);
                 } else {
-                    const n_read = try SPack.delta_unpack(
-                        base,
-                        data_section[offset .. offset + remainder_packed_len],
-                        scratch_b,
-                        remainder_width,
-                    );
-                    std.debug.assert(n_read == remainder_packed_len);
                     @memcpy(output[0..n_remainder], scratch_b[0..n_remainder]);
                 }
-                offset += remainder_packed_len;
             } else {
                 offset += 1;
             }
@@ -1774,17 +1774,14 @@ fn Impl(comptime T: type) type {
 
                 @memcpy(scratch_a[0..packed_data.len], packed_data);
 
+                offset += FL.dyn_undelta_pack(scratch_a[0..packed_len], bases, scratch_b, width);
+                FL.untranspose(scratch_b, scratch_a);
+
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 if (IS_SIGNED) {
-                    offset += FL.dyn_undelta_pack(scratch_a[0..packed_len], &bases, scratch_b, width);
-                    FL.untranspose(scratch_b, scratch_a);
-
-                    const o: *align(ALIGNMENT) const [1024]T = @ptrCast(scratch_b);
-                    ZigZag(T).decode1024(scratch_a, o);
-                    out_offset[0..1024].* = o.*;
+                    ZigZag(T).decode1024(scratch_a, @ptrCast(scratch_b));
+                    out_offset[0..1024].* = @bitCast(scratch_b.*);
                 } else {
-                    offset += FL.dyn_undelta_pack(scratch_a[0..packed_len], bases, scratch_b, width);
-                    FL.untranspose(scratch_b, scratch_a);
                     out_offset[0..1024].* = @bitCast(scratch_a.*);
                 }
             }
@@ -1819,40 +1816,36 @@ fn Impl(comptime T: type) type {
             return N_BITS - @clz(range);
         }
 
-        /// Load input data, apply zigzag encoding if needed
+        /// Load input data into `in`, apply zigzag encoding if needed
         fn load_remainder(
             noalias input: []const T,
             noalias scratch: *align(ALIGNMENT) [1024]U,
-            noalias in: *align(ALIGNMENT) [1024]U,
-        ) []align(ALIGNMENT) const U {
+            noalias in: []align(ALIGNMENT) const U,
+        ) void {
             std.debug.assert(input.len < 1024);
+            std.debug.assert(input.len == in.len);
 
             if (IS_SIGNED) {
                 const scratch_t: *align(ALIGNMENT) [1024]T = @ptrCast(scratch);
                 @memcpy(scratch_t[0..input.len], input);
-                const zigzagged: []align(ALIGNMENT) U = in[0..input.len];
-                ZigZag(T).encode(scratch_t[0..input.len], zigzagged);
-                return zigzagged;
+                ZigZag(T).encode(scratch_t[0..input.len], in);
             } else {
-                @memcpy(in[0..input.len], @as([]const U, @ptrCast(input)));
-                return in[0..input.len];
+                @memcpy(in, @as([]const U, @ptrCast(input)));
             }
         }
 
-        /// Load input data, apply zigzag encoding if needed
+        /// Load input data into `in`, apply zigzag encoding if needed
         fn load_block(
             noalias input: *const [1024]T,
             noalias scratch: *align(ALIGNMENT) [1024]U,
             noalias in: *align(ALIGNMENT) [1024]U,
-        ) *align(ALIGNMENT) const [1024]U {
+        ) void {
             if (IS_SIGNED) {
                 const scratch_t: *align(ALIGNMENT) [1024]T = @ptrCast(scratch);
                 scratch_t.* = input.*;
                 ZigZag(T).encode1024(scratch_t, in);
-                return in;
             } else {
                 in.* = @bitCast(input.*);
-                return in;
             }
         }
     };
