@@ -66,18 +66,18 @@ pub fn Zint(comptime T: type) type {
             return switch (T) {
                 i128, u128 => Impl128(T).bitpack_compress(
                     buf[0..1024],
-                    buf[1024..1536],
+                    buf[1024..2048],
                     input,
                     output,
                 ),
                 i256, u256 => Impl256(T).bitpack_compress(
                     buf[0..1024],
-                    buf[1024..1280],
+                    buf[1024..1536],
                     input,
                     output,
                 ),
                 else => Impl(T).bitpack_compress(
-                    buf[0..1024],
+                    buf[0..2048],
                     input,
                     output,
                 ),
@@ -101,18 +101,18 @@ pub fn Zint(comptime T: type) type {
             return switch (T) {
                 i128, u128 => Impl128(T).bitpack_decompress(
                     buf[0..1024],
-                    buf[1024..1536],
+                    buf[1024..2048],
                     input,
                     output,
                 ),
                 i256, u256 => Impl256(T).bitpack_decompress(
                     buf[0..1024],
-                    buf[1024..1280],
+                    buf[1024..1536],
                     input,
                     output,
                 ),
                 else => Impl(T).bitpack_decompress(
-                    buf[0..1024],
+                    buf[0..2048],
                     input,
                     output,
                 ),
@@ -145,18 +145,18 @@ pub fn Zint(comptime T: type) type {
             return switch (T) {
                 i128, u128 => Impl128(T).forpack_compress(
                     buf[0..1024],
-                    buf[1024..1536],
+                    buf[1024..2048],
                     input,
                     output,
                 ),
                 i256, u256 => Impl256(T).forpack_compress(
                     buf[0..1024],
-                    buf[1024..1280],
+                    buf[1024..1536],
                     input,
                     output,
                 ),
                 else => Impl(T).forpack_compress(
-                    buf[0..1024],
+                    buf[0..2048],
                     input,
                     output,
                 ),
@@ -180,18 +180,18 @@ pub fn Zint(comptime T: type) type {
             return switch (T) {
                 i128, u128 => Impl128(T).forpack_decompress(
                     buf[0..1024],
-                    buf[1024..1536],
+                    buf[1024..2048],
                     input,
                     output,
                 ),
                 i256, u256 => Impl256(T).forpack_decompress(
                     buf[0..1024],
-                    buf[1024..1280],
+                    buf[1024..1536],
                     input,
                     output,
                 ),
                 else => Impl(T).forpack_decompress(
-                    buf[0..1024],
+                    buf[0..2048],
                     input,
                     output,
                 ),
@@ -224,21 +224,18 @@ pub fn Zint(comptime T: type) type {
             return switch (T) {
                 i128, u128 => Impl128(T).delta_compress(
                     buf[0..1024],
-                    buf[1024..1536],
-                    buf[1536..2048],
+                    buf[1024..2048],
                     input,
                     output,
                 ),
                 i256, u256 => Impl256(T).delta_compress(
                     buf[0..1024],
-                    buf[1024..1280],
-                    buf[1280..1536],
+                    buf[1024..1536],
                     input,
                     output,
                 ),
                 else => Impl(T).delta_compress(
-                    buf[0..1024],
-                    buf[1024..2048],
+                    buf[0..2048],
                     input,
                     output,
                 ),
@@ -262,21 +259,18 @@ pub fn Zint(comptime T: type) type {
             return switch (T) {
                 i128, u128 => Impl128(T).delta_decompress(
                     buf[0..1024],
-                    buf[1024..1536],
-                    buf[1536..2048],
+                    buf[1024..2048],
                     input,
                     output,
                 ),
                 i256, u256 => Impl256(T).delta_decompress(
                     buf[0..1024],
-                    buf[1024..1280],
-                    buf[1280..1536],
+                    buf[1024..1536],
                     input,
                     output,
                 ),
                 else => Impl(T).delta_decompress(
-                    buf[0..1024],
-                    buf[1024..2048],
+                    buf[0..2048],
                     input,
                     output,
                 ),
@@ -310,7 +304,7 @@ fn Impl256(comptime T: type) type {
 
         fn bitpack_compress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [256]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -334,7 +328,7 @@ fn Impl256(comptime T: type) type {
             const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
             const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -383,7 +377,7 @@ fn Impl256(comptime T: type) type {
 
         fn bitpack_decompress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [256]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -403,7 +397,7 @@ fn Impl256(comptime T: type) type {
             const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
             const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -445,7 +439,7 @@ fn Impl256(comptime T: type) type {
 
         fn forpack_compress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [256]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -469,7 +463,7 @@ fn Impl256(comptime T: type) type {
             const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
             const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -498,7 +492,7 @@ fn Impl256(comptime T: type) type {
 
         fn forpack_decompress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [256]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -518,7 +512,7 @@ fn Impl256(comptime T: type) type {
             const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
             const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -566,8 +560,7 @@ fn Impl256(comptime T: type) type {
 
         fn delta_compress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias transposed: *align(ALIGNMENT) [256]T,
-            noalias delta: *align(ALIGNMENT) [256]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -591,8 +584,7 @@ fn Impl256(comptime T: type) type {
             const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
             const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
-            const delta_buf: *align(ALIGNMENT) [1024]I = @ptrCast(delta);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -604,16 +596,16 @@ fn Impl256(comptime T: type) type {
                     split_d[0..n_remainder],
                 );
 
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_a[0..n_remainder], output[offset..]);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_b[0..n_remainder], output[offset..]);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_c[0..n_remainder], output[offset..]);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_d[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, split_c[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, split_d[0..n_remainder], output[offset..]);
             }
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
                 split(block, split_a, split_b, split_c, split_d);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, @ptrCast(split_buf), output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
             }
 
             return offset;
@@ -621,8 +613,7 @@ fn Impl256(comptime T: type) type {
 
         fn delta_decompress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [256]T,
-            noalias transposed: *align(ALIGNMENT) [256]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -642,31 +633,26 @@ fn Impl256(comptime T: type) type {
             const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
             const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
-            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     split_a[0..n_remainder],
                 );
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     split_b[0..n_remainder],
                 );
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     split_c[0..n_remainder],
                 );
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     split_d[0..n_remainder],
                 );
@@ -683,7 +669,6 @@ fn Impl256(comptime T: type) type {
             for (0..n_whole_blocks) |block_idx| {
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     @ptrCast(split_buf),
                 );
@@ -796,7 +781,7 @@ fn Impl128(comptime T: type) type {
 
         fn bitpack_compress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [512]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -817,7 +802,7 @@ fn Impl128(comptime T: type) type {
 
             const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
             const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -838,7 +823,7 @@ fn Impl128(comptime T: type) type {
 
         fn bitpack_decompress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [512]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -855,7 +840,7 @@ fn Impl128(comptime T: type) type {
 
             const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
             const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -889,7 +874,7 @@ fn Impl128(comptime T: type) type {
 
         fn forpack_compress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [512]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -910,7 +895,7 @@ fn Impl128(comptime T: type) type {
 
             const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
             const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -931,7 +916,7 @@ fn Impl128(comptime T: type) type {
 
         fn forpack_decompress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [512]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -948,7 +933,7 @@ fn Impl128(comptime T: type) type {
 
             const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
             const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -982,8 +967,7 @@ fn Impl128(comptime T: type) type {
 
         fn delta_compress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias transposed: *align(ALIGNMENT) [512]T,
-            noalias delta: *align(ALIGNMENT) [512]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -1004,21 +988,20 @@ fn Impl128(comptime T: type) type {
 
             const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
             const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
-            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
-            const delta_buf: *align(ALIGNMENT) [1024]I = @ptrCast(delta);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
                 split(input[0..n_remainder], split_a[0..n_remainder], split_b[0..n_remainder]);
 
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_a[0..n_remainder], output[offset..]);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, split_b[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
             }
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
                 split(block, split_a, split_b);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, @ptrCast(split_buf), output[offset..]);
+                offset += try Inner.delta_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
             }
 
             return offset;
@@ -1026,8 +1009,7 @@ fn Impl128(comptime T: type) type {
 
         fn delta_decompress(
             noalias split_buf: *align(ALIGNMENT) [1024]T,
-            noalias scratch: *align(ALIGNMENT) [512]T,
-            noalias transposed: *align(ALIGNMENT) [512]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -1044,19 +1026,16 @@ fn Impl128(comptime T: type) type {
 
             const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
             const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
-            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
+            const scratch_buf: *align(ALIGNMENT) [2048]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     split_a[0..n_remainder],
                 );
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     split_b[0..n_remainder],
                 );
@@ -1067,7 +1046,6 @@ fn Impl128(comptime T: type) type {
             for (0..n_whole_blocks) |block_idx| {
                 offset += try Inner.delta_decompress(
                     scratch_buf,
-                    transposed_buf,
                     input[offset..],
                     @ptrCast(split_buf),
                 );
@@ -1659,7 +1637,7 @@ fn Impl(comptime T: type) type {
 
                 FL.transpose(scratch_b, scratch_a);
 
-                const bases: *const [FL.N_LANES]U = scratch_a[0..FL.N_LANES];
+                const bases: *align(ALIGNMENT) const [FL.N_LANES]U = scratch_a[0..FL.N_LANES];
 
                 {
                     const out_o = out[offset..];
@@ -1775,7 +1753,7 @@ fn Impl(comptime T: type) type {
 
                 @memcpy(scratch_a[0..packed_data.len], packed_data);
 
-                const pl = FL.dyn_undelta_pack(scratch_a[0..packed_len], bases, scratch_b, width);
+                const pl = FL.dyn_undelta_pack(scratch_a[0..packed_len], &bases, scratch_b, width);
                 std.debug.assert(pl == packed_len);
 
                 FL.untranspose(scratch_b, scratch_a);
@@ -1824,8 +1802,9 @@ fn Impl(comptime T: type) type {
             std.debug.assert(out.len == output.len);
 
             if (IS_SIGNED) {
-                ZigZag(T).decode(out, @ptrCast(scratch));
-                @memcpy(output, scratch);
+                const scratch_t: *align(ALIGNMENT) [1024]T = @ptrCast(scratch);
+                ZigZag(T).decode(out, scratch_t[0..out.len]);
+                @memcpy(output, scratch_t[0..out.len]);
             } else {
                 @memcpy(output, out);
             }
@@ -1849,7 +1828,7 @@ fn Impl(comptime T: type) type {
         fn load_remainder(
             noalias input: []const T,
             noalias scratch: *align(ALIGNMENT) [1024]U,
-            noalias in: []align(ALIGNMENT) const U,
+            noalias in: []align(ALIGNMENT) U,
         ) void {
             std.debug.assert(input.len < 1024);
             std.debug.assert(input.len == in.len);

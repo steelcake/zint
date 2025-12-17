@@ -167,7 +167,7 @@ pub fn FastLanes(comptime T: type) type {
             unreachable;
         }
 
-        pub fn packed_len(width: u8) usize {
+        pub fn packed_len(width: usize) usize {
             return 1024 / N_BITS * width;
         }
 
