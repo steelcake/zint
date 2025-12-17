@@ -1,5 +1,6 @@
 pub fn ZigZag(comptime T: type) type {
     return struct {
+        pub const ALIGNMENT = 64;
         const N_BITS = @sizeOf(T) * 8;
         pub const U = switch (T) {
             i8 => u8,
@@ -14,8 +15,8 @@ pub fn ZigZag(comptime T: type) type {
         }
 
         pub fn encode(
-            noalias input: []const T,
-            noalias output: []U,
+            noalias input: []align(ALIGNMENT) const T,
+            noalias output: []align(ALIGNMENT) U,
         ) void {
             for (input, output) |*i, *o| {
                 const v = i.*;
@@ -24,8 +25,8 @@ pub fn ZigZag(comptime T: type) type {
         }
 
         pub fn decode(
-            noalias input: []const U,
-            noalias output: []T,
+            noalias input: []align(ALIGNMENT) const U,
+            noalias output: []align(ALIGNMENT) T,
         ) void {
             for (input, output) |*i, *o| {
                 const v = i.*;
@@ -34,8 +35,8 @@ pub fn ZigZag(comptime T: type) type {
         }
 
         pub fn encode1024(
-            noalias input: *const [1024]T,
-            noalias output: *[1024]U,
+            noalias input: *align(ALIGNMENT) const [1024]T,
+            noalias output: *align(ALIGNMENT) [1024]U,
         ) void {
             for (0..1024) |i| {
                 const v = input[i];
@@ -44,8 +45,8 @@ pub fn ZigZag(comptime T: type) type {
         }
 
         pub fn decode1024(
-            noalias input: *const [1024]U,
-            noalias output: *[1024]T,
+            noalias input: *align(ALIGNMENT) const [1024]U,
+            noalias output: *align(ALIGNMENT) [1024]T,
         ) void {
             for (0..1024) |i| {
                 const v = input[i];
@@ -61,18 +62,28 @@ fn Test(comptime T: type) type {
 
         const Z = ZigZag(T);
 
+        const ALIGNMENT = 64;
+
+        fn alloc(comptime Y: type, len: usize) []align(ALIGNMENT) Y {
+            return std.heap.page_allocator.alignedAlloc(
+                Y,
+                std.mem.Alignment.fromByteUnits(ALIGNMENT),
+                len,
+            ) catch unreachable;
+        }
+
         fn read_input1024(input: []const u8) ?[1024]T {
             if (input.len < @sizeOf(T) * 1024) return null;
             return @bitCast(input[0 .. @sizeOf(T) * 1024].*);
         }
 
         fn fuzz_zigzag1024(_: void, input: []const u8) anyerror!void {
-            const in = read_input1024(input) orelse return;
+            const in: [1024]T align(ALIGNMENT) = read_input1024(input) orelse return;
 
-            var output = std.mem.zeroes([1024]Z.U);
+            var output: [1024]Z.U align(ALIGNMENT) = std.mem.zeroes([1024]Z.U);
             Z.encode1024(&in, &output);
 
-            var out = std.mem.zeroes([1024]T);
+            var out: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             Z.decode1024(&output, &out);
 
             try std.testing.expect(std.mem.eql(T, &out, &in));
@@ -84,16 +95,16 @@ fn Test(comptime T: type) type {
 
         const MAX_INPUT = 12332;
         const Ctx = struct {
-            input: []T,
-            zigzagged: []Z.U,
-            output: []T,
+            input: []align(ALIGNMENT) T,
+            zigzagged: []align(ALIGNMENT) Z.U,
+            output: []align(ALIGNMENT) T,
         };
 
-        fn read_input(ctx: Ctx, input: []const u8) []const T {
+        fn read_input(ctx: Ctx, input: []const u8) []align(ALIGNMENT) const T {
             const in_len = input.len / @sizeOf(T) * @sizeOf(T);
             const len = @min(in_len, MAX_INPUT * @sizeOf(T));
 
-            const o: []align(@sizeOf(T)) u8 = @ptrCast(ctx.input);
+            const o: []align(ALIGNMENT) u8 = @ptrCast(ctx.input);
 
             @memcpy(o[0..len], input[0..len]);
 
@@ -111,9 +122,9 @@ fn Test(comptime T: type) type {
 
         test fuzz_zigzag {
             const ctx = Ctx{
-                .input = try std.heap.page_allocator.alloc(T, MAX_INPUT),
-                .zigzagged = try std.heap.page_allocator.alloc(Z.U, MAX_INPUT),
-                .output = try std.heap.page_allocator.alloc(T, MAX_INPUT),
+                .input = alloc(T, MAX_INPUT),
+                .zigzagged = alloc(Z.U, MAX_INPUT),
+                .output = alloc(T, MAX_INPUT),
             };
             defer std.heap.page_allocator.free(ctx.zigzagged);
             defer std.heap.page_allocator.free(ctx.output);

@@ -9,6 +9,8 @@
 
 const FL_ORDER = [_]usize{ 0, 4, 2, 6, 1, 5, 3, 7 };
 
+pub const ALIGNMENT = 64;
+
 fn index(row: usize, lane: usize) usize {
     const o = row / 8;
     const s = row % 8;
@@ -38,9 +40,9 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn delta(
-            noalias input: *const [1024]T,
-            noalias base: *const [N_LANES]T,
-            noalias output: *[1024]T,
+            noalias input: *align(ALIGNMENT) const [1024]T,
+            noalias base: *align(ALIGNMENT) const [N_LANES]T,
+            noalias output: *align(ALIGNMENT) [1024]T,
         ) void {
             for (0..N_LANES) |lane| {
                 var prev = base[lane];
@@ -54,9 +56,9 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn undelta(
-            noalias input: *const [1024]T,
-            noalias base: *const [N_LANES]T,
-            noalias output: *[1024]T,
+            noalias input: *align(ALIGNMENT) const [1024]T,
+            noalias base: *align(ALIGNMENT) const [N_LANES]T,
+            noalias output: *align(ALIGNMENT) [1024]T,
         ) void {
             for (0..N_LANES) |lane| {
                 var prev = base[lane];
@@ -70,8 +72,8 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn transpose(
-            noalias input: *const [1024]T,
-            noalias output: *[1024]T,
+            noalias input: *align(ALIGNMENT) const [1024]T,
+            noalias output: *align(ALIGNMENT) [1024]T,
         ) void {
             for (0..1024) |i| {
                 output[i] = input[transpose_idx(i)];
@@ -79,8 +81,8 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn untranspose(
-            noalias input: *const [1024]T,
-            noalias output: *[1024]T,
+            noalias input: *align(ALIGNMENT) const [1024]T,
+            noalias output: *align(ALIGNMENT) [1024]T,
         ) void {
             for (0..1024) |i| {
                 output[transpose_idx(i)] = input[i];
@@ -88,8 +90,8 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_bit_pack(
-            noalias input: *const [1024]T,
-            noalias output: []align(1) T,
+            noalias input: *align(ALIGNMENT) const [1024]T,
+            noalias output: []align(ALIGNMENT) T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -103,8 +105,8 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_bit_unpack(
-            noalias input: []align(1) const T,
-            noalias output: *[1024]T,
+            noalias input: []align(ALIGNMENT) const T,
+            noalias output: *align(ALIGNMENT) [1024]T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -118,9 +120,9 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_for_pack(
-            noalias input: *const [1024]T,
+            noalias input: *align(ALIGNMENT) const [1024]T,
             reference: T,
-            noalias output: []align(1) T,
+            noalias output: []align(ALIGNMENT) T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -134,9 +136,9 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_for_unpack(
-            noalias input: []align(1) const T,
+            noalias input: []align(ALIGNMENT) const T,
             reference: T,
-            noalias output: *[1024]T,
+            noalias output: *align(ALIGNMENT) [1024]T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -150,9 +152,9 @@ pub fn FastLanes(comptime T: type) type {
         }
 
         pub fn dyn_undelta_pack(
-            noalias input: []align(1) const T,
-            noalias base: *align(1) const [N_LANES]T,
-            noalias output: *[1024]T,
+            noalias input: []align(ALIGNMENT) const T,
+            noalias base: *align(ALIGNMENT) const [N_LANES]T,
+            noalias output: *align(ALIGNMENT) [1024]T,
             width: usize,
         ) usize {
             inline for (0..N_BITS + 1) |W| {
@@ -176,7 +178,7 @@ pub fn FastLanes(comptime T: type) type {
                 inline fn pack(
                     ctx: anytype,
                     comptime kernel: fn (@TypeOf(ctx), idx: usize) T,
-                    noalias output: *align(1) [PACKED_LEN]T,
+                    noalias output: *align(ALIGNMENT) [PACKED_LEN]T,
                     lane: usize,
                 ) void {
                     if (W == 0) {
@@ -217,7 +219,7 @@ pub fn FastLanes(comptime T: type) type {
                 inline fn unpack(
                     ctx: anytype,
                     comptime kernel: fn (@TypeOf(ctx), idx: usize, elem: T) void,
-                    noalias input: *align(1) const [PACKED_LEN]T,
+                    noalias input: *align(ALIGNMENT) const [PACKED_LEN]T,
                     lane: usize,
                 ) void {
                     if (W == 0) {
@@ -261,8 +263,8 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn bit_pack(
-                    noalias input: *const [1024]T,
-                    noalias output: *align(1) [PACKED_LEN]T,
+                    noalias input: *align(ALIGNMENT) const [1024]T,
+                    noalias output: *align(ALIGNMENT) [PACKED_LEN]T,
                 ) void {
                     const Kernel = struct {
                         fn kernel(in: *const [1024]T, idx: usize) T {
@@ -276,8 +278,8 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn bit_unpack(
-                    noalias input: *align(1) const [PACKED_LEN]T,
-                    noalias output: *[1024]T,
+                    noalias input: *align(ALIGNMENT) const [PACKED_LEN]T,
+                    noalias output: *align(ALIGNMENT) [1024]T,
                 ) void {
                     const Kernel = struct {
                         fn kernel(out: *[1024]T, idx: usize, elem: T) void {
@@ -291,9 +293,9 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn for_pack(
-                    noalias input: *const [1024]T,
+                    noalias input: *align(ALIGNMENT) const [1024]T,
                     reference: T,
-                    noalias output: *align(1) [PACKED_LEN]T,
+                    noalias output: *align(ALIGNMENT) [PACKED_LEN]T,
                 ) void {
                     const Ctx = struct {
                         ref: T,
@@ -317,9 +319,9 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn for_unpack(
-                    noalias input: *align(1) const [PACKED_LEN]T,
+                    noalias input: *align(ALIGNMENT) const [PACKED_LEN]T,
                     reference: T,
-                    noalias output: *[1024]T,
+                    noalias output: *align(ALIGNMENT) [1024]T,
                 ) void {
                     const Ctx = struct {
                         ref: T,
@@ -343,9 +345,9 @@ pub fn FastLanes(comptime T: type) type {
                 }
 
                 pub fn undelta_pack(
-                    noalias input: *align(1) const [PACKED_LEN]T,
-                    noalias base: *align(1) const [N_LANES]T,
-                    noalias output: *[1024]T,
+                    noalias input: *align(ALIGNMENT) const [PACKED_LEN]T,
+                    noalias base: *align(ALIGNMENT) const [N_LANES]T,
+                    noalias output: *align(ALIGNMENT) [1024]T,
                 ) void {
                     for (0..N_LANES) |lane| {
                         var prev: T = base[lane];
@@ -382,7 +384,7 @@ fn Test(comptime T: type) type {
 
         const FL = FastLanes(T);
 
-        fn needed_width(noalias data: *const [1024]T) u7 {
+        fn needed_width(noalias data: *align(ALIGNMENT) const [1024]T) u7 {
             var m = data[0];
             for (0..1024) |idx| {
                 m = @max(data[idx], m);
@@ -394,7 +396,7 @@ fn Test(comptime T: type) type {
             if (input.len < 1 + @sizeOf(T) * 1024) return null;
 
             const has_zeroes = input[0] % 2 == 0;
-            var in: [1024]T = @bitCast(input[1 .. 1 + @sizeOf(T) * 1024].*);
+            var in: [1024]T align(ALIGNMENT) = @bitCast(input[1 .. 1 + @sizeOf(T) * 1024].*);
 
             if (!has_zeroes) {
                 const replacement = in[0] +| 1;
@@ -409,12 +411,12 @@ fn Test(comptime T: type) type {
         }
 
         fn fuzz_bit_pack(_: void, input: []const u8) anyerror!void {
-            const in = read_input(input) orelse return;
+            const in: [1024]T align(ALIGNMENT) = read_input(input) orelse return;
             const width = needed_width(&in);
-            var p = std.mem.zeroes([1024]T);
+            var p: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             const packed_len = FL.dyn_bit_pack(&in, &p, width);
 
-            var out = std.mem.zeroes([1024]T);
+            var out: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
 
             const pl = FL.dyn_bit_unpack(&p, &out, width);
 
@@ -428,39 +430,39 @@ fn Test(comptime T: type) type {
         }
 
         fn fuzz_delta_pack(_: void, input: []const u8) anyerror!void {
-            const in = read_input(input) orelse return;
+            const in: [1024]T align(ALIGNMENT) = read_input(input) orelse return;
 
-            var transposed = std.mem.zeroes([1024]T);
+            var transposed: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             FL.transpose(&in, &transposed);
 
-            var untransposed = std.mem.zeroes([1024]T);
+            var untransposed: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             FL.untranspose(&transposed, &untransposed);
 
             try std.testing.expect(std.mem.eql(T, &in, &untransposed));
 
             const bases = transposed[0..FL.N_LANES];
 
-            var delta = std.mem.zeroes([1024]T);
+            var delta: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             FL.delta(&transposed, bases, &delta);
 
-            var undelta = std.mem.zeroes([1024]T);
+            var undelta: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             FL.undelta(&delta, bases, &undelta);
 
             try std.testing.expect(std.mem.eql(T, &undelta, &transposed));
 
             const width = needed_width(&delta);
 
-            var p = std.mem.zeroes([1024]T);
+            var p: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             const packed_len = FL.dyn_bit_pack(&delta, &p, width);
 
-            var unpacked = std.mem.zeroes([1024]T);
+            var unpacked: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             const pl = FL.dyn_bit_unpack(&p, &unpacked, width);
 
             try std.testing.expectEqual(pl, packed_len);
 
             try std.testing.expect(std.mem.eql(T, &delta, &unpacked));
 
-            var undelta_packed = std.mem.zeroes([1024]T);
+            var undelta_packed: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             const dpl = FL.dyn_undelta_pack(&p, bases, &undelta_packed, width);
             try std.testing.expectEqual(dpl, packed_len);
 
@@ -472,15 +474,15 @@ fn Test(comptime T: type) type {
         }
 
         fn fuzz_for_pack(_: void, input: []const u8) anyerror!void {
-            const in = read_input(input) orelse return;
+            const in: [1024]T align(ALIGNMENT) = read_input(input) orelse return;
 
             const min, const max = std.mem.minMax(T, &in);
             const width = (@sizeOf(T) * 8) - @clz(max - min);
 
-            var p = std.mem.zeroes([1024]T);
+            var p: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
             const packed_len = FL.dyn_for_pack(&in, min, &p, width);
 
-            var out = std.mem.zeroes([1024]T);
+            var out: [1024]T align(ALIGNMENT) = std.mem.zeroes([1024]T);
 
             const pl = FL.dyn_for_unpack(&p, min, &out, width);
 

@@ -7,6 +7,8 @@ pub fn ScalarBitpack(comptime T: type) type {
     return struct {
         const N_BITS = @sizeOf(T) * 8;
 
+        pub const ALIGNMENT = 64;
+
         pub const Error = error{
             InvalidInput,
         };
@@ -14,7 +16,12 @@ pub fn ScalarBitpack(comptime T: type) type {
         /// Bit packs and writes integers from the input into the output.
         ///
         /// Returns the number of elements written to the output.
-        pub fn bitpack(input: []const T, reference: T, output: []align(1) T, bit_width: u8) Error!usize {
+        pub fn bitpack(
+            noalias input: []align(ALIGNMENT) const T,
+            reference: T,
+            noalias output: []align(ALIGNMENT) T,
+            bit_width: u8,
+        ) Error!usize {
             if (bit_width > N_BITS) {
                 return Error.InvalidInput;
             }
@@ -87,7 +94,12 @@ pub fn ScalarBitpack(comptime T: type) type {
         /// Reads packed integers from input into the output.
         ///
         /// Returns the number of elements consumed from the input.
-        pub fn bitunpack(input: []align(1) const T, reference: T, output: []T, bit_width: u8) Error!usize {
+        pub fn bitunpack(
+            noalias input: []align(ALIGNMENT) const T,
+            reference: T,
+            noalias output: []align(ALIGNMENT) T,
+            bit_width: u8,
+        ) Error!usize {
             if (bit_width > N_BITS) return Error.InvalidInput;
 
             if (bit_width == N_BITS) {
@@ -164,7 +176,12 @@ pub fn ScalarBitpack(comptime T: type) type {
         /// Delta codes, bit packs and writes integers from the input into the output.
         ///
         /// Returns the number of elements written to the output.
-        pub fn delta_bitpack(base: T, input: []const T, output: []align(1) T, bit_width: u8) Error!usize {
+        pub fn delta_bitpack(
+            base: T,
+            noalias input: []align(ALIGNMENT) const T,
+            noalias output: []align(ALIGNMENT) T,
+            bit_width: u8,
+        ) Error!usize {
             if (bit_width > N_BITS) {
                 return Error.InvalidInput;
             }
@@ -238,7 +255,12 @@ pub fn ScalarBitpack(comptime T: type) type {
         /// Reads delta coded and packed integers from input into the output.
         ///
         /// Returns the number of elements consumed from the input.
-        pub fn delta_unpack(base: T, input: []align(1) const T, output: []T, bit_width: u8) Error!usize {
+        pub fn delta_unpack(
+            base: T,
+            noalias input: []align(ALIGNMENT) const T,
+            noalias output: []align(ALIGNMENT) T,
+            bit_width: u8,
+        ) Error!usize {
             if (bit_width > N_BITS) return Error.InvalidInput;
 
             if (bit_width == N_BITS) {
@@ -320,13 +342,23 @@ fn TestScalarBitpack(comptime T: type) type {
         const std = @import("std");
         const SBP = ScalarBitpack(T);
 
+        const ALIGNMENT = 64;
+
         const Context = struct {
-            in: []T,
-            packed_out: []T,
-            roundtrip: []T,
+            in: []align(ALIGNMENT) T,
+            packed_out: []align(ALIGNMENT) T,
+            roundtrip: []align(ALIGNMENT) T,
         };
 
-        fn read_input(in: []T, input_raw: []const u8) ?[]const T {
+        fn alloc(len: usize) []align(ALIGNMENT) T {
+            return std.heap.page_allocator.alignedAlloc(
+                T,
+                std.mem.Alignment.fromByteUnits(ALIGNMENT),
+                len,
+            ) catch unreachable;
+        }
+
+        fn read_input(in: []align(ALIGNMENT) T, input_raw: []const u8) ?[]align(ALIGNMENT) const T {
             if (input_raw.len < 1) return null;
 
             const has_zeroes = input_raw[0] % 2 == 0;
@@ -369,9 +401,9 @@ fn TestScalarBitpack(comptime T: type) type {
         test "fuzz scalar FOR bitpacking" {
             const max_len = 12333;
             const ctx = Context{
-                .roundtrip = std.heap.page_allocator.alloc(T, max_len) catch unreachable,
-                .in = std.heap.page_allocator.alloc(T, max_len) catch unreachable,
-                .packed_out = std.heap.page_allocator.alloc(T, max_len) catch unreachable,
+                .roundtrip = alloc(max_len),
+                .in = alloc(max_len),
+                .packed_out = alloc(max_len),
             };
             try std.testing.fuzz(ctx, fuzz_scalar_for, .{});
         }
@@ -404,9 +436,9 @@ fn TestScalarBitpack(comptime T: type) type {
         test "fuzz scalar DELTA bitpacking" {
             const max_len = 12333;
             const ctx = Context{
-                .roundtrip = std.heap.page_allocator.alloc(T, max_len) catch unreachable,
-                .in = std.heap.page_allocator.alloc(T, max_len) catch unreachable,
-                .packed_out = std.heap.page_allocator.alloc(T, max_len) catch unreachable,
+                .roundtrip = alloc(max_len),
+                .in = alloc(max_len),
+                .packed_out = alloc(max_len),
             };
             try std.testing.fuzz(ctx, fuzz_scalar_delta, .{});
         }

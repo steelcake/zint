@@ -6,6 +6,7 @@ const ZigZag = @import("./zigzag.zig").ZigZag;
 const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
 const CONTEXT_SIZE = 1 << 16; // 64KB context is needed in case of delta compressing 256bit integers
+const ALIGNMENT = 64;
 
 pub const Error = error{InvalidInput};
 
@@ -13,10 +14,14 @@ pub const Error = error{InvalidInput};
 ///
 /// This is a fairly large allocation (currently 64KB). So it is recommended to re-use this.
 pub const Ctx = struct {
-    buf: []align(64) u8,
+    buf: []align(ALIGNMENT) u8,
 
     pub fn init(alloc: Allocator) error{OutOfMemory}!Ctx {
-        const buf = try alloc.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(64), CONTEXT_SIZE);
+        const buf = try alloc.alignedAlloc(
+            u8,
+            std.mem.Alignment.fromByteUnits(ALIGNMENT),
+            CONTEXT_SIZE,
+        );
 
         return .{
             .buf = buf,
@@ -27,7 +32,7 @@ pub const Ctx = struct {
         alloc.free(self.buf);
     }
 
-    fn typed(self: Ctx, comptime T: type) []align(64) T {
+    fn typed(self: Ctx, comptime T: type) []align(ALIGNMENT) T {
         return @ptrCast(self.buf);
     }
 };
@@ -304,8 +309,8 @@ fn Impl256(comptime T: type) type {
         }
 
         fn bitpack_compress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[256]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [256]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -324,12 +329,12 @@ fn Impl256(comptime T: type) type {
             // number of bytes written so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
-            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
-            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
-            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -341,24 +346,44 @@ fn Impl256(comptime T: type) type {
                     split_d[0..n_remainder],
                 );
 
-                offset += try Inner.bitpack_compress(scratch_buf, split_a[0..n_remainder], output[offset..]);
-                offset += try Inner.bitpack_compress(scratch_buf, split_b[0..n_remainder], output[offset..]);
-                offset += try Inner.bitpack_compress(scratch_buf, split_c[0..n_remainder], output[offset..]);
-                offset += try Inner.bitpack_compress(scratch_buf, split_d[0..n_remainder], output[offset..]);
+                offset += try Inner.bitpack_compress(
+                    scratch_buf,
+                    split_a[0..n_remainder],
+                    output[offset..],
+                );
+                offset += try Inner.bitpack_compress(
+                    scratch_buf,
+                    split_b[0..n_remainder],
+                    output[offset..],
+                );
+                offset += try Inner.bitpack_compress(
+                    scratch_buf,
+                    split_c[0..n_remainder],
+                    output[offset..],
+                );
+                offset += try Inner.bitpack_compress(
+                    scratch_buf,
+                    split_d[0..n_remainder],
+                    output[offset..],
+                );
             }
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
                 split(block, split_a, split_b, split_c, split_d);
-                offset += try Inner.bitpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+                offset += try Inner.bitpack_compress(
+                    scratch_buf,
+                    @ptrCast(split_buf),
+                    output[offset..],
+                );
             }
 
             return offset;
         }
 
         fn bitpack_decompress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[256]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [256]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -373,12 +398,12 @@ fn Impl256(comptime T: type) type {
             // number of bytes read so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..256]);
-            const split_b: *[1024]I = @ptrCast(split_buf[256..512]);
-            const split_c: *[1024]I = @ptrCast(split_buf[512..768]);
-            const split_d: *[1024]I = @ptrCast(split_buf[768..1024]);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..256]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[256..512]);
+            const split_c: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..768]);
+            const split_d: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[768..1024]);
 
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -419,8 +444,8 @@ fn Impl256(comptime T: type) type {
         }
 
         fn forpack_compress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[256]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [256]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -472,8 +497,8 @@ fn Impl256(comptime T: type) type {
         }
 
         fn forpack_decompress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[256]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [256]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -540,9 +565,9 @@ fn Impl256(comptime T: type) type {
         }
 
         fn delta_compress(
-            noalias split_buf: *[1024]T,
-            noalias transposed: *[256]T,
-            noalias delta: *[256]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias transposed: *align(ALIGNMENT) [256]T,
+            noalias delta: *align(ALIGNMENT) [256]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -595,9 +620,9 @@ fn Impl256(comptime T: type) type {
         }
 
         fn delta_decompress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[256]T,
-            noalias transposed: *[256]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [256]T,
+            noalias transposed: *align(ALIGNMENT) [256]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -677,10 +702,10 @@ fn Impl256(comptime T: type) type {
         }
 
         fn combine1024(
-            noalias a: *const [1024]I,
-            noalias b: *const [1024]I,
-            noalias c: *const [1024]I,
-            noalias d: *const [1024]I,
+            noalias a: *align(ALIGNMENT) const [1024]I,
+            noalias b: *align(ALIGNMENT) const [1024]I,
+            noalias c: *align(ALIGNMENT) const [1024]I,
+            noalias d: *align(ALIGNMENT) const [1024]I,
             noalias output: *[1024]T,
         ) void {
             const out: *[1024][4]I = @ptrCast(output);
@@ -690,10 +715,10 @@ fn Impl256(comptime T: type) type {
         }
 
         fn combine(
-            noalias a: []const I,
-            noalias b: []const I,
-            noalias c: []const I,
-            noalias d: []const I,
+            noalias a: []align(ALIGNMENT) const I,
+            noalias b: []align(ALIGNMENT) const I,
+            noalias c: []align(ALIGNMENT) const I,
+            noalias d: []align(ALIGNMENT) const I,
             noalias output: []T,
         ) void {
             std.debug.assert(output.len == a.len);
@@ -709,10 +734,10 @@ fn Impl256(comptime T: type) type {
 
         fn split1024(
             noalias input: *const [1024]T,
-            noalias a: *[1024]I,
-            noalias b: *[1024]I,
-            noalias c: *[1024]I,
-            noalias d: *[1024]I,
+            noalias a: *align(ALIGNMENT) [1024]I,
+            noalias b: *align(ALIGNMENT) [1024]I,
+            noalias c: *align(ALIGNMENT) [1024]I,
+            noalias d: *align(ALIGNMENT) [1024]I,
         ) void {
             for (0..1024) |i| {
                 const v: [4]I = @bitCast(input[i]);
@@ -725,10 +750,10 @@ fn Impl256(comptime T: type) type {
 
         fn split(
             noalias input: []const T,
-            noalias a: []I,
-            noalias b: []I,
-            noalias c: []I,
-            noalias d: []I,
+            noalias a: []align(ALIGNMENT) I,
+            noalias b: []align(ALIGNMENT) I,
+            noalias c: []align(ALIGNMENT) I,
+            noalias d: []align(ALIGNMENT) I,
         ) void {
             std.debug.assert(input.len == a.len);
             std.debug.assert(input.len == b.len);
@@ -770,8 +795,8 @@ fn Impl128(comptime T: type) type {
         }
 
         fn bitpack_compress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[512]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -790,9 +815,9 @@ fn Impl128(comptime T: type) type {
             // number of bytes written so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
-            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -812,8 +837,8 @@ fn Impl128(comptime T: type) type {
         }
 
         fn bitpack_decompress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[512]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -828,9 +853,9 @@ fn Impl128(comptime T: type) type {
             // number of bytes read so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
-            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -863,8 +888,8 @@ fn Impl128(comptime T: type) type {
         }
 
         fn forpack_compress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[512]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -883,9 +908,9 @@ fn Impl128(comptime T: type) type {
             // number of bytes written so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
-            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -905,8 +930,8 @@ fn Impl128(comptime T: type) type {
         }
 
         fn forpack_decompress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[512]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -921,9 +946,9 @@ fn Impl128(comptime T: type) type {
             // number of bytes read so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
-            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
 
             if (n_remainder > 0) {
                 offset += try Inner.forpack_decompress(scratch_buf, input[offset..], split_a[0..n_remainder]);
@@ -956,9 +981,9 @@ fn Impl128(comptime T: type) type {
         }
 
         fn delta_compress(
-            noalias split_buf: *[1024]T,
-            noalias transposed: *[512]T,
-            noalias delta: *[512]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias transposed: *align(ALIGNMENT) [512]T,
+            noalias delta: *align(ALIGNMENT) [512]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -977,10 +1002,10 @@ fn Impl128(comptime T: type) type {
             // number of bytes written so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
-            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
-            const transposed_buf: *[1024]I = @ptrCast(transposed);
-            const delta_buf: *[1024]I = @ptrCast(delta);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
+            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
+            const delta_buf: *align(ALIGNMENT) [1024]I = @ptrCast(delta);
 
             // write remainder data
             if (n_remainder > 0) {
@@ -1000,9 +1025,9 @@ fn Impl128(comptime T: type) type {
         }
 
         fn delta_decompress(
-            noalias split_buf: *[1024]T,
-            noalias scratch: *[512]T,
-            noalias transposed: *[512]T,
+            noalias split_buf: *align(ALIGNMENT) [1024]T,
+            noalias scratch: *align(ALIGNMENT) [512]T,
+            noalias transposed: *align(ALIGNMENT) [512]T,
             noalias input: []const u8,
             noalias output: []T,
         ) Error!usize {
@@ -1017,10 +1042,10 @@ fn Impl128(comptime T: type) type {
             // number of bytes read so far
             var offset: usize = 0;
 
-            const split_a: *[1024]I = @ptrCast(split_buf[0..512]);
-            const split_b: *[1024]I = @ptrCast(split_buf[512..]);
-            const scratch_buf: *[1024]I = @ptrCast(scratch);
-            const transposed_buf: *[1024]I = @ptrCast(transposed);
+            const split_a: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[0..512]);
+            const split_b: *align(ALIGNMENT) [1024]I = @ptrCast(split_buf[512..]);
+            const scratch_buf: *align(ALIGNMENT) [1024]I = @ptrCast(scratch);
+            const transposed_buf: *align(ALIGNMENT) [1024]I = @ptrCast(transposed);
 
             if (n_remainder > 0) {
                 offset += try Inner.delta_decompress(
@@ -1055,8 +1080,8 @@ fn Impl128(comptime T: type) type {
         }
 
         fn combine1024(
-            noalias a: *const [1024]I,
-            noalias b: *const [1024]I,
+            noalias a: *align(ALIGNMENT) const [1024]I,
+            noalias b: *align(ALIGNMENT) const [1024]I,
             noalias output: *[1024]T,
         ) void {
             const out: *[1024][2]I = @ptrCast(output);
@@ -1065,7 +1090,7 @@ fn Impl128(comptime T: type) type {
             }
         }
 
-        fn combine(noalias a: []const I, noalias b: []const I, noalias output: []T) void {
+        fn combine(noalias a: []align(ALIGNMENT) const I, noalias b: []align(ALIGNMENT) const I, noalias output: []T) void {
             std.debug.assert(output.len == a.len);
             std.debug.assert(output.len == b.len);
 
@@ -1075,7 +1100,7 @@ fn Impl128(comptime T: type) type {
             }
         }
 
-        fn split1024(noalias input: *const [1024]T, noalias a: *[1024]I, noalias b: *[1024]I) void {
+        fn split1024(noalias input: *const [1024]T, noalias a: *align(ALIGNMENT) [1024]I, noalias b: *align(ALIGNMENT) [1024]I) void {
             for (0..1024) |i| {
                 const v: [2]I = @bitCast(input[i]);
                 a[i] = v[0];
@@ -1083,7 +1108,7 @@ fn Impl128(comptime T: type) type {
             }
         }
 
-        fn split(noalias input: []const T, noalias a: []I, noalias b: []I) void {
+        fn split(noalias input: []const T, noalias a: []align(ALIGNMENT) I, noalias b: []align(ALIGNMENT) I) void {
             std.debug.assert(input.len == a.len);
             std.debug.assert(input.len == b.len);
 
@@ -1138,7 +1163,7 @@ fn Impl(comptime T: type) type {
         ///
         /// Returns the number of bytes written to the output.
         fn bitpack_compress(
-            noalias scratch: *[1024]T,
+            noalias scratch: *align(ALIGNMENT) [1024]T,
             noalias input: []const T,
             noalias output: []u8,
         ) Error!usize {
@@ -1762,7 +1787,7 @@ fn Impl(comptime T: type) type {
             return data_section_byte_offset + @sizeOf(T) * offset;
         }
 
-        fn max1024(input: *const [1024]U) U {
+        fn max1024(input: *align(ALIGNMENT) const [1024]U) U {
             var m = input[0];
             for (0..1024) |i| {
                 m = @max(input[i], m);
@@ -1770,7 +1795,7 @@ fn Impl(comptime T: type) type {
             return m;
         }
 
-        fn minmax1024(input: *const [1024]U) struct { U, U } {
+        fn minmax1024(input: *align(ALIGNMENT) const [1024]U) struct { U, U } {
             var min = input[0];
             var max = input[0];
 
@@ -1787,7 +1812,6 @@ fn Impl(comptime T: type) type {
         }
 
         /// Load input data, apply zigzag encoding if needed
-        /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
         fn load_remainder(input: []const T, scratch: []T) []const U {
             std.debug.assert(input.len == scratch.len);
             if (IS_SIGNED) {
@@ -1800,7 +1824,6 @@ fn Impl(comptime T: type) type {
         }
 
         /// Load input data, apply zigzag encoding if needed
-        /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
         fn load_block(input: *const [1024]T, scratch: *[1024]T) *const [1024]U {
             if (IS_SIGNED) {
                 const zigzagged: *[1024]U = @ptrCast(scratch);
