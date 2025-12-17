@@ -5,7 +5,7 @@ const FastLanes = @import("./fastlanes.zig").FastLanes;
 const ZigZag = @import("./zigzag.zig").ZigZag;
 const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
-const CONTEXT_SIZE = 1 << 16; // 64KB context is needed in case of delta compressing 256bit integers
+const CONTEXT_SIZE = 1 << 16; // at least 64KB of context is needed for 256bit integers
 const ALIGNMENT = 64;
 
 pub const Error = error{InvalidInput};
@@ -22,6 +22,7 @@ pub const Ctx = struct {
             std.mem.Alignment.fromByteUnits(ALIGNMENT),
             CONTEXT_SIZE,
         );
+        @memset(buf, 0);
 
         return .{
             .buf = buf,
@@ -1598,7 +1599,8 @@ fn Impl(comptime T: type) type {
 
                 var prev: U = base;
                 var max_delta: U = 0;
-                for (scratch_b[0..n_remainder]) |v| {
+                for (0..n_remainder) |i| {
+                    const v = scratch_b[i];
                     const d = v -% prev;
                     max_delta = @max(max_delta, d);
                     prev = v;
