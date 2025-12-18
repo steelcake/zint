@@ -13,6 +13,7 @@ const zint = @import("./zint.zig");
 
 pub const Zint = zint.Zint;
 pub const Ctx = zint.Ctx;
+pub const FastLanes = fastlanes.FastLanes;
 
 test {
     _ = fastlanes;

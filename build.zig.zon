@@ -1,6 +1,6 @@
 .{
     .name = .zint,
-    .version = "0.0.2",
+    .version = "0.0.3",
     .minimum_zig_version = "0.16.0-dev.732+2f3234c76",
     .fingerprint = 0xced69c47992c4887,
     .paths = .{

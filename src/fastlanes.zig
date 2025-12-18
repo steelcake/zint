@@ -37,6 +37,39 @@ pub fn FastLanes(comptime T: type) type {
             return (1 << width) - 1;
         }
 
+        pub fn rle_encode(
+            noalias input: *const [1024]T,
+            noalias rle_vals: *[1024]T,
+            noalias rle_idxs: *[1024]u16,
+        ) usize {
+            rle_vals[0] = input[0];
+            rle_idxs[0] = 0;
+
+            var rle_val_idx: u16 = 0;
+            var prev = input[0];
+            for (1..1024) |i| {
+                const curr = input[i];
+                if (curr != prev) {
+                    rle_val_idx += 1;
+                    rle_vals[rle_val_idx] = curr;
+                    prev = curr;
+                }
+                rle_idxs[i] = rle_val_idx;
+            }
+
+            return rle_val_idx + 1;
+        }
+
+        pub fn rle_decode(
+            noalias rle_vals: []const T,
+            noalias rle_idxs: *const [1024]u16,
+            noalias output: *[1024]T,
+        ) void {
+            for (rle_idxs, output) |i, *out| {
+                out.* = rle_vals[i];
+            }
+        }
+
         pub fn delta(
             noalias input: *const [1024]T,
             noalias base: *const [N_LANES]T,
@@ -406,6 +439,25 @@ fn Test(comptime T: type) type {
             }
 
             return in;
+        }
+
+        fn fuzz_rle(_: void, input: []const u8) anyerror!void {
+            const in = read_input(input) orelse return;
+
+            var rle_vals = std.mem.zeroes([1024]T);
+            var rle_idxs = std.mem.zeroes([1024]u16);
+
+            const len = FL.rle_encode(&in, &rle_vals, &rle_idxs);
+
+            var out = std.mem.zeroes([1024]T);
+
+            FL.rle_decode(rle_vals[0..len], &rle_idxs, &out);
+
+            try std.testing.expect(std.mem.eql(T, &out, &in));
+        }
+
+        test "fuzz_rle" {
+            try std.testing.fuzz({}, fuzz_rle, .{});
         }
 
         fn fuzz_bit_pack(_: void, input: []const u8) anyerror!void {
