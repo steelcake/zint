@@ -152,7 +152,7 @@ fn DeltaWidth(comptime T: type, comptime W: comptime_int) type {
         fn fill_input(input: []T) void {
             var prng = Prng.init(0);
             const rand = prng.random();
-            var val: T = 0;
+            var val: T = rand.int(T);
             for (0..input.len) |i| {
                 input[i] = val;
                 val +%= rand.int(U);
@@ -175,7 +175,11 @@ fn FrameWidth(comptime T: type, comptime W: comptime_int) type {
             var val = rand.int(T);
             for (0..input.len) |i| {
                 input[i] = val;
-                val +%= rand.int(U);
+                if (rand.boolean()) {
+                    val +%= rand.int(U);
+                } else {
+                    val -|= rand.int(U);
+                }
             }
         }
 

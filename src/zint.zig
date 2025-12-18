@@ -1800,7 +1800,7 @@ fn Impl(comptime T: type) type {
 
         /// Load input data, apply zigzag encoding if needed
         /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
-        fn load_remainder(input: []const T, scratch: []T) []const U {
+        fn load_remainder(noalias input: []const T, noalias scratch: []T) []const U {
             std.debug.assert(input.len == scratch.len);
             if (IS_SIGNED) {
                 const zigzagged: []U = @ptrCast(scratch);
@@ -1813,7 +1813,7 @@ fn Impl(comptime T: type) type {
 
         /// Load input data, apply zigzag encoding if needed
         /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
-        fn load_block(input: *const [1024]T, scratch: *[1024]T) *const [1024]U {
+        fn load_block(noalias input: *const [1024]T, noalias scratch: *[1024]T) *const [1024]U {
             if (IS_SIGNED) {
                 const zigzagged: *[1024]U = @ptrCast(scratch);
                 ZigZag(T).encode(input, zigzagged);
