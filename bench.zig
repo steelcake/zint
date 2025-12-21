@@ -59,7 +59,7 @@ const ALGOS = .{
 
 const BUFFER_SIZE = 1 << 34;
 
-const N_RUNS = 1;
+const N_RUNS = 100;
 
 pub fn main() anyerror!void {
     const mem = alloc_thp(BUFFER_SIZE).?;
@@ -82,7 +82,7 @@ pub fn main() anyerror!void {
     var prng = Prng.init(0);
     const rand = prng.random();
 
-    @setEvalBranchQuota(4096);
+    @setEvalBranchQuota(8192);
 
     inline for (TYPES) |T| {
         const input_b: []T = @ptrCast(input_buf);
@@ -93,6 +93,13 @@ pub fn main() anyerror!void {
 
             inline for (DATASETS) |ds| {
                 ds(T, W).fill_input(input_b);
+
+                inline for (ALGOS) |algo| {
+                    const alg = algo(T).init();
+                    defer alg.deinit();
+
+                    _ = try bench_one(T, alg, rand, 1024 + 69, input_b, compressed_buf, output_b);
+                }
 
                 for (LENGTHS) |len| {
                     std.debug.print(
