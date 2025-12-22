@@ -294,10 +294,7 @@ fn Impl256(comptime T: type) type {
             const n_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            // We will compress the four blocks together as they won't effect each other.
-            const size_per_block = Inner.bitpack_compress_bound(4096);
-
-            // We will make four seperate calls to compress the remainder
+            const size_per_block = 4 * Inner.bitpack_compress_bound(1024);
             const size_for_remainder = 4 * Inner.bitpack_compress_bound(n_remainder);
 
             return n_blocks * size_per_block + size_for_remainder;
@@ -349,8 +346,13 @@ fn Impl256(comptime T: type) type {
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
-                split(block, split_a, split_b, split_c, split_d);
-                offset += try Inner.bitpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+                inline for (0..4) |elem| {
+                    for (0..1024) |i| {
+                        const b: [4]I = @bitCast(block[i]);
+                        split_a[i] = b[elem];
+                    }
+                    offset += try Inner.bitpack_compress(scratch_buf, @ptrCast(split_a), output[offset..]);
+                }
             }
 
             return offset;
@@ -396,10 +398,13 @@ fn Impl256(comptime T: type) type {
             }
 
             for (0..n_whole_blocks) |block_idx| {
-                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_buf));
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_a));
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_b));
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_c));
+                offset += try Inner.bitpack_decompress(scratch_buf, input[offset..], @ptrCast(split_d));
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-                combine(split_a, split_b, split_c, split_d, out_offset[0..1024]);
+                combine1024(split_a, split_b, split_c, split_d, out_offset[0..1024]);
             }
 
             return offset;
@@ -409,10 +414,7 @@ fn Impl256(comptime T: type) type {
             const n_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            // We will compress the four blocks together as they won't effect each other.
-            const size_per_block = Inner.forpack_compress_bound(4096);
-
-            // We will make four seperate calls to compress the remainder
+            const size_per_block = 4 * Inner.forpack_compress_bound(1024);
             const size_for_remainder = 4 * Inner.forpack_compress_bound(n_remainder);
 
             return n_blocks * size_per_block + size_for_remainder;
@@ -464,8 +466,13 @@ fn Impl256(comptime T: type) type {
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
-                split(block, split_a, split_b, split_c, split_d);
-                offset += try Inner.forpack_compress(scratch_buf, @ptrCast(split_buf), output[offset..]);
+                const b: *const [1024][4]I = @ptrCast(block);
+                inline for (0..4) |elem| {
+                    for (0..1024) |i| {
+                        split_a[i] = b[i][elem];
+                    }
+                    offset += try Inner.forpack_compress(scratch_buf, @ptrCast(split_a), output[offset..]);
+                }
             }
 
             return offset;
@@ -511,7 +518,10 @@ fn Impl256(comptime T: type) type {
             }
 
             for (0..n_whole_blocks) |block_idx| {
-                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_buf));
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_a));
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_b));
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_c));
+                offset += try Inner.forpack_decompress(scratch_buf, input[offset..], @ptrCast(split_d));
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 combine(
@@ -587,7 +597,7 @@ fn Impl256(comptime T: type) type {
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
-                split(block, split_a, split_b, split_c, split_d);
+                split1024(block, split_a, split_b, split_c, split_d);
                 offset += try Inner.delta_compress(transposed_buf, delta_buf, @ptrCast(split_buf), output[offset..]);
             }
 
@@ -664,7 +674,7 @@ fn Impl256(comptime T: type) type {
                 );
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
-                combine(
+                combine1024(
                     split_a,
                     split_b,
                     split_c,
@@ -1280,7 +1290,7 @@ fn Impl(comptime T: type) type {
                         scratch_u,
                         remainder_width,
                     );
-                    std.debug.assert(n_read == remainder_packed_len);
+                    std.debug.assert(n_read == remainder_packed_len); 
                     @memcpy(output[0..n_remainder], scratch_u[0..n_remainder]);
                 }
                 offset += remainder_packed_len;
@@ -1306,7 +1316,15 @@ fn Impl(comptime T: type) type {
                         scratch_u,
                         width,
                     );
-                    out_offset[0..1024].* = scratch_u.*;
+                    // const FACTOR = 16;
+                    // for (0..1024/FACTOR) |i| {
+                    //     inline for (0..FACTOR) |j| {
+                    //         const idx = i * FACTOR + j;
+                    //         out_offset[idx] = scratch_u[idx];
+                    //     }
+                    // }
+                    copy_scratch(scratch_u, out_offset);
+                    // out_offset[0..1024].* = scratch_u.*;
                 }
             }
 
@@ -1314,6 +1332,16 @@ fn Impl(comptime T: type) type {
             std.debug.assert(offset == data_section.len);
 
             return data_section_byte_offset + @sizeOf(T) * offset;
+        }
+
+        fn copy_scratch(noalias scratch: *const [1024]U, noalias out_offset: []U) void {
+            const Vec = @Vector(8, u64);
+            const sv: []align(@sizeOf(U)) const Vec = @ptrCast(scratch);
+            const ov: []align(@sizeOf(U)) Vec = @ptrCast(out_offset[0..1024]);
+
+            inline for (0..1024 * @sizeOf(U) / @sizeOf(Vec)) |i| {
+                ov[i] = sv[i];
+            }
         }
 
         /// Returns the number of BYTES needed on the output buffer for compressing
@@ -1524,7 +1552,8 @@ fn Impl(comptime T: type) type {
                         scratch_u,
                         width,
                     );
-                    out_offset[0..1024].* = scratch_u.*;
+                    // out_offset[0..1024].* = scratch_u.*;
+                    copy_scratch(scratch_u, out_offset);
                 }
             }
 
@@ -1637,7 +1666,7 @@ fn Impl(comptime T: type) type {
                 // use delta for doing zigzag
                 // can't use transpose for it because we will write from the zigzag buffer into
                 // transpose
-                const block = load_block(&input_blocks[block_idx], delta);
+                const block = load_block_copy(&input_blocks[block_idx], delta);
 
                 const transposed_buf: *[1024]U = @ptrCast(transposed);
                 const delta_buf: *[1024]U = @ptrCast(delta);
@@ -1764,7 +1793,8 @@ fn Impl(comptime T: type) type {
                     const scratch_u: *[1024]U = @ptrCast(scratch);
                     offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
                     FL.untranspose(transposed_buf, scratch_u);
-                    out_offset[0..1024].* = scratch_u.*;
+                    // out_offset[0..1024].* = scratch_u.*;
+                    copy_scratch(scratch_u, out_offset);
                 }
             }
 
@@ -1816,10 +1846,23 @@ fn Impl(comptime T: type) type {
         fn load_block(noalias input: *const [1024]T, noalias scratch: *[1024]T) *const [1024]U {
             if (IS_SIGNED) {
                 const zigzagged: *[1024]U = @ptrCast(scratch);
-                ZigZag(T).encode(input, zigzagged);
+                ZigZag(T).encode1024(input, zigzagged);
                 return zigzagged;
             } else {
                 return @ptrCast(input);
+            }
+        }
+
+        /// Load input data, apply zigzag encoding if needed
+        /// returns the loaded data and a bit set to 1 if zigzag encoding is applied
+        fn load_block_copy(noalias input: *const [1024]T, noalias scratch: *[1024]T) *const [1024]U {
+            if (IS_SIGNED) {
+                const zigzagged: *[1024]U = @ptrCast(scratch);
+                ZigZag(T).encode1024(input, zigzagged);
+                return zigzagged;
+            } else {
+                copy_scratch(@ptrCast(input), @ptrCast(scratch));
+                return scratch;
             }
         }
     };
