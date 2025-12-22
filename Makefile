@@ -6,3 +6,5 @@ bench:
 	zig build bench -Doptimize=ReleaseFast
 bench_safe:
 	zig build bench -Doptimize=ReleaseSafe
+build_bench:
+	zig build install -Doptimize=ReleaseFast
