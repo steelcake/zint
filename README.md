@@ -27,7 +27,7 @@ const compressed_size = Z.bitpack_compress(ctx, input, compress_buf);
 const compressed = compress_buf[0..compressed_size];
 
 const output = try std.heap.page_allocator.alloc(T, input.len);
-const consumed_size = try Z.decompress(ctx, compressed, output);
+const consumed_size = try Z.bitpack_decompress(ctx, compressed, output);
 
 std.debug.assert(compressed_size == consumed_size);
 
@@ -56,14 +56,6 @@ My interpretation of the benchmarks is that using the right Zint variant for rig
 Bitpacking and FrameOfReference+BitPacking almost match memcopy performance but Delta+Bitpacking is slower than memcopy.
 
 In terms of compression ratio, the right variant of Zint is better or on par with zstd(level 1) while lz4 tends to be worse.
-
-## avx512 
-
-Avx512 really hurts delta encoding/decoding performance on all cpus I tested with (ryzen desktop and epyc).
-
-So compiling with `-Dcpu=znver3` or just `-Dcpu=native-avx512f` greatly improves the performance.
-
-Similar setting on intel would be `-Dcpu=haswell` or `-Dcpu=native-avx512f`.
 
 ## License
 
