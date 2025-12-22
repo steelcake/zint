@@ -540,10 +540,7 @@ fn Impl256(comptime T: type) type {
             const n_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            // We will compress the four blocks together as they won't effect each other.
-            const size_per_block = Inner.delta_compress_bound(4096);
-
-            // We will make four seperate calls to compress the remainder
+            const size_per_block = 4 * Inner.delta_compress_bound(1024);
             const size_for_remainder = 4 * Inner.delta_compress_bound(n_remainder);
 
             return n_blocks * size_per_block + size_for_remainder;
@@ -597,8 +594,18 @@ fn Impl256(comptime T: type) type {
 
             const blocks: []const [1024]T = @ptrCast(input[n_remainder..]);
             for (blocks) |*block| {
-                split1024(block, split_a, split_b, split_c, split_d);
-                offset += try Inner.delta_compress(transposed_buf, delta_buf, @ptrCast(split_buf), output[offset..]);
+                const b: *const [1024][4]I = @ptrCast(block);
+                inline for (0..4) |elem| {
+                    for (0..1024) |i| {
+                        split_a[i] = b[i][elem];
+                    }
+                    offset += try Inner.delta_compress(
+                        transposed_buf,
+                        delta_buf,
+                        @ptrCast(split_a),
+                        output[offset..],
+                    );
+                }
             }
 
             return offset;
@@ -670,7 +677,25 @@ fn Impl256(comptime T: type) type {
                     scratch_buf,
                     transposed_buf,
                     input[offset..],
-                    @ptrCast(split_buf),
+                    @ptrCast(split_a),
+                );
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    @ptrCast(split_b),
+                );
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    @ptrCast(split_c),
+                );
+                offset += try Inner.delta_decompress(
+                    scratch_buf,
+                    transposed_buf,
+                    input[offset..],
+                    @ptrCast(split_d),
                 );
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
