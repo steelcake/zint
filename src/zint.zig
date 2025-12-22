@@ -1290,7 +1290,7 @@ fn Impl(comptime T: type) type {
                         scratch_u,
                         remainder_width,
                     );
-                    std.debug.assert(n_read == remainder_packed_len); 
+                    std.debug.assert(n_read == remainder_packed_len);
                     @memcpy(output[0..n_remainder], scratch_u[0..n_remainder]);
                 }
                 offset += remainder_packed_len;

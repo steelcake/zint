@@ -9,13 +9,13 @@
 
 const FL_ORDER = [_]usize{ 0, 4, 2, 6, 1, 5, 3, 7 };
 
-fn index(row: usize, lane: usize) usize {
+inline fn index(row: usize, lane: usize) usize {
     const o = row / 8;
     const s = row % 8;
     return (FL_ORDER[o] * 16) + (s * 128) + lane;
 }
 
-fn transpose_idx(idx: usize) usize {
+inline fn transpose_idx(idx: usize) usize {
     const lane = idx % 16;
     const order = (idx / 16) % 8;
     const row = idx / 128;
@@ -106,8 +106,12 @@ pub fn FastLanes(comptime T: type) type {
             noalias input: *const [1024]T,
             noalias output: *[1024]T,
         ) void {
-            for (0..1024) |i| {
-                output[i] = input[transpose_idx(i)];
+            const UNROLL = 32;
+            for (0..1024 / UNROLL) |i| {
+                const idx = i * UNROLL;
+                inline for (0..UNROLL) |j| {
+                    output[idx + j] = input[transpose_idx(idx + j)];
+                }
             }
         }
 
@@ -115,8 +119,12 @@ pub fn FastLanes(comptime T: type) type {
             noalias input: *const [1024]T,
             noalias output: *[1024]T,
         ) void {
-            for (0..1024) |i| {
-                output[transpose_idx(i)] = input[i];
+            const UNROLL = 32;
+            for (0..1024 / UNROLL) |i| {
+                const idx = i * UNROLL;
+                inline for (0..UNROLL) |j| {
+                    output[transpose_idx(idx + j)] = input[idx + j];
+                }
             }
         }
 
