@@ -23,450 +23,450 @@ inline fn transpose_idx(idx: usize) usize {
     return (lane * 64) + (FL_ORDER[order] * 8) + row;
 }
 
-        // const N_BITS = @sizeOf(T) * 8;
-        // pub const N_LANES = 1024 / N_BITS;
+// const N_BITS = @sizeOf(T) * 8;
+// pub const N_LANES = 1024 / N_BITS;
 
 pub fn n_lanes(comptime T: type) comptime_int {
     return 1024 / @bitSizeOf(T);
 }
 
-        inline fn mask(comptime T: type, width: comptime_int) T {
-            return (1 << width) - 1;
+inline fn mask(comptime T: type, width: comptime_int) T {
+    return (1 << width) - 1;
+}
+
+pub fn rle_encode(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    noalias rle_vals: *[1024]T,
+    noalias rle_idxs: *[1024]u16,
+) usize {
+    rle_vals[0] = input[0];
+    rle_idxs[0] = 0;
+
+    var rle_val_idx: u16 = 0;
+    var prev = input[0];
+    for (1..1024) |i| {
+        const curr = input[i];
+        if (curr != prev) {
+            rle_val_idx += 1;
+            rle_vals[rle_val_idx] = curr;
+            prev = curr;
         }
+        rle_idxs[i] = rle_val_idx;
+    }
 
-        pub fn rle_encode(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            noalias rle_vals: *[1024]T,
-            noalias rle_idxs: *[1024]u16,
-        ) usize {
-            rle_vals[0] = input[0];
-            rle_idxs[0] = 0;
+    return rle_val_idx + 1;
+}
 
-            var rle_val_idx: u16 = 0;
-            var prev = input[0];
-            for (1..1024) |i| {
-                const curr = input[i];
-                if (curr != prev) {
-                    rle_val_idx += 1;
-                    rle_vals[rle_val_idx] = curr;
-                    prev = curr;
-                }
-                rle_idxs[i] = rle_val_idx;
-            }
+pub fn rle_decode(
+    comptime T: type,
+    noalias rle_vals: []const T,
+    noalias rle_idxs: *const [1024]u16,
+    noalias output: *[1024]T,
+) void {
+    for (rle_idxs, output) |i, *out| {
+        out.* = rle_vals[i];
+    }
+}
 
-            return rle_val_idx + 1;
+pub fn delta(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    noalias base: *const [n_lanes(T)]T,
+    noalias output: *[1024]T,
+) void {
+    for (0..n_lanes(T)) |lane| {
+        var prev = base[lane];
+        inline for (0..@bitSizeOf(T)) |row| {
+            const idx = index(row, lane);
+            const next = input[idx];
+            output[idx] = next -% prev;
+            prev = next;
         }
+    }
+}
 
-        pub fn rle_decode(
-            comptime T: type,
-            noalias rle_vals: []const T,
-            noalias rle_idxs: *const [1024]u16,
-            noalias output: *[1024]T,
-        ) void {
-            for (rle_idxs, output) |i, *out| {
-                out.* = rle_vals[i];
-            }
+pub fn undelta(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    noalias base: *const [n_lanes(T)]T,
+    noalias output: *[1024]T,
+) void {
+    for (0..n_lanes(T)) |lane| {
+        var prev = base[lane];
+        inline for (0..@bitSizeOf(T)) |row| {
+            const idx = index(row, lane);
+            const next = input[idx] +% prev;
+            output[idx] = next;
+            prev = next;
         }
+    }
+}
 
-        pub fn delta(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            noalias base: *const [n_lanes(T)]T,
-            noalias output: *[1024]T,
-        ) void {
-            for (0..n_lanes(T)) |lane| {
-                var prev = base[lane];
-                inline for (0..@bitSizeOf(T)) |row| {
-                    const idx = index(row, lane);
-                    const next = input[idx];
-                    output[idx] = next -% prev;
-                    prev = next;
-                }
-            }
+pub fn transpose(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    noalias output: *[1024]T,
+) void {
+    const UNROLL = 32;
+    for (0..1024 / UNROLL) |i| {
+        const idx = i * UNROLL;
+        for (0..UNROLL) |j| {
+            output[idx + j] = input[transpose_idx(idx + j)];
         }
+    }
+}
 
-        pub fn undelta(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            noalias base: *const [n_lanes(T)]T,
-            noalias output: *[1024]T,
-        ) void {
-            for (0..n_lanes(T)) |lane| {
-                var prev = base[lane];
-                inline for (0..@bitSizeOf(T)) |row| {
-                    const idx = index(row, lane);
-                    const next = input[idx] +% prev;
-                    output[idx] = next;
-                    prev = next;
-                }
-            }
+pub fn untranspose(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    noalias output: *[1024]T,
+) void {
+    const UNROLL = 32;
+    for (0..1024 / UNROLL) |i| {
+        const idx = i * UNROLL;
+        for (0..UNROLL) |j| {
+            output[transpose_idx(idx + j)] = input[idx + j];
         }
+    }
+}
 
-        pub fn transpose(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            noalias output: *[1024]T,
-        ) void {
-            const UNROLL = 32;
-            for (0..1024 / UNROLL) |i| {
-                const idx = i * UNROLL;
-                for (0..UNROLL) |j| {
-                    output[idx + j] = input[transpose_idx(idx + j)];
-                }
-            }
+pub fn dyn_bit_pack(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    noalias output: []align(1) T,
+    width: usize,
+) usize {
+    inline for (0..@bitSizeOf(T) + 1) |W| {
+        if (W == width) {
+            @call(.never_inline, bit_pack, .{ T, W, input, output[0..packed_len(T, W)] });
+            return packed_len(T, W);
         }
+    }
+    unreachable;
+}
 
-        pub fn untranspose(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            noalias output: *[1024]T,
-        ) void {
-            const UNROLL = 32;
-            for (0..1024 / UNROLL) |i| {
-                const idx = i * UNROLL;
-                for (0..UNROLL) |j| {
-                    output[transpose_idx(idx + j)] = input[idx + j];
-                }
-            }
+pub fn dyn_bit_unpack(
+    comptime T: type,
+    noalias input: []align(1) const T,
+    noalias output: *[1024]T,
+    width: usize,
+) usize {
+    inline for (0..@bitSizeOf(T) + 1) |W| {
+        if (W == width) {
+            @call(.never_inline, bit_unpack, .{ T, W, input[0..packed_len(T, W)], output });
+            return packed_len(T, W);
         }
+    }
+    unreachable;
+}
 
-        pub fn dyn_bit_pack(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            noalias output: []align(1) T,
-            width: usize,
-        ) usize {
-            inline for (0..@bitSizeOf(T) + 1) |W| {
-                if (W == width) {
-                    @call(.never_inline, bit_pack, .{ T, W, input, output[0..packed_len(T, W)] });
-                    return packed_len(T, W);
-                }
-            }
-            unreachable;
+pub fn dyn_for_pack(
+    comptime T: type,
+    noalias input: *const [1024]T,
+    reference: T,
+    noalias output: []align(1) T,
+    width: usize,
+) usize {
+    inline for (0..@bitSizeOf(T) + 1) |W| {
+        if (W == width) {
+            @call(.never_inline, for_pack, .{ T, W, input, reference, output[0..packed_len(T, W)] });
+            return packed_len(T, W);
         }
+    }
+    unreachable;
+}
 
-        pub fn dyn_bit_unpack(
-            comptime T: type,
-            noalias input: []align(1) const T,
-            noalias output: *[1024]T,
-            width: usize,
-        ) usize {
-            inline for (0..@bitSizeOf(T) + 1) |W| {
-                if (W == width) {
-                    @call(.never_inline, bit_unpack, .{ T, W, input[0..packed_len(T, W)], output });
-                    return packed_len(T, W);
-                }
-            }
-            unreachable;
+pub fn dyn_for_unpack(
+    comptime T: type,
+    noalias input: []align(1) const T,
+    reference: T,
+    noalias output: *[1024]T,
+    width: usize,
+) usize {
+    inline for (0..@bitSizeOf(T) + 1) |W| {
+        if (W == width) {
+            @call(.never_inline, for_unpack, .{ T, W, input[0..packed_len(T, W)], reference, output });
+            return packed_len(T, W);
         }
+    }
+    unreachable;
+}
 
-        pub fn dyn_for_pack(
-            comptime T: type,
-            noalias input: *const [1024]T,
-            reference: T,
-            noalias output: []align(1) T,
-            width: usize,
-        ) usize {
-            inline for (0..@bitSizeOf(T) + 1) |W| {
-                if (W == width) {
-                    @call(.never_inline, for_pack, .{ T, W, input, reference, output[0..packed_len(T, W)] });
-                    return packed_len(T, W);
-                }
-            }
-            unreachable;
+pub fn dyn_undelta_pack(
+    comptime T: type,
+    noalias input: []align(1) const T,
+    noalias base: *align(1) const [n_lanes(T)]T,
+    noalias output: *[1024]T,
+    width: usize,
+) usize {
+    inline for (0..@bitSizeOf(T) + 1) |W| {
+        if (W == width) {
+            @call(.never_inline, undelta_pack, .{ T, W, input[0..packed_len(T, W)], base, output });
+            return packed_len(T, W);
         }
-
-        pub fn dyn_for_unpack(
-            comptime T: type,
-            noalias input: []align(1) const T,
-            reference: T,
-            noalias output: *[1024]T,
-            width: usize,
-        ) usize {
-            inline for (0..@bitSizeOf(T) + 1) |W| {
-                if (W == width) {
-                    @call(.never_inline, for_unpack, .{ T, W, input[0..packed_len(T, W)], reference, output });
-                    return packed_len(T, W);
-                }
-            }
-            unreachable;
-        }
-
-        pub fn dyn_undelta_pack(
-            comptime T: type,
-            noalias input: []align(1) const T,
-            noalias base: *align(1) const [n_lanes(T)]T,
-            noalias output: *[1024]T,
-            width: usize,
-        ) usize {
-            inline for (0..@bitSizeOf(T) + 1) |W| {
-                if (W == width) {
-                    @call(.never_inline, undelta_pack, .{ T, W, input[0..packed_len(T, W)], base, output });
-                    return packed_len(T, W);
-                }
-            }
-            unreachable;
-        }
+    }
+    unreachable;
+}
 
 fn packed_len(comptime T: type, comptime W: comptime_int) comptime_int {
     return 1024 * W / @bitSizeOf(T);
 }
 
-                pub fn bit_pack(
-                    comptime T: type,
-                    comptime W: comptime_int,
-                    noalias input: *const [1024]T,
-                    noalias output: *align(1) [packed_len(T, W)]T,
-                ) void {
-                    const N_BITS = @bitSizeOf(T);
-                    const N_LANES = n_lanes(T);
+pub fn bit_pack(
+    comptime T: type,
+    comptime W: comptime_int,
+    noalias input: *const [1024]T,
+    noalias output: *align(1) [packed_len(T, W)]T,
+) void {
+    const N_BITS = @bitSizeOf(T);
+    const N_LANES = n_lanes(T);
 
-                    for (0..n_lanes(T)) |lane| {
-                        if (W == 0) {
-                            return;
-                        } else if (W == @bitSizeOf(T)) {
-                            inline for (0..@bitSizeOf(T)) |row| {
-                                const idx = index(row, lane);
-                                output[N_LANES * row + lane] = input[idx];
-                            }
-                            return;
-                        } else {
-                            const mask_ = mask(T, W);
+    for (0..n_lanes(T)) |lane| {
+        if (W == 0) {
+            return;
+        } else if (W == @bitSizeOf(T)) {
+            inline for (0..@bitSizeOf(T)) |row| {
+                const idx = index(row, lane);
+                output[N_LANES * row + lane] = input[idx];
+            }
+            return;
+        } else {
+            const mask_ = mask(T, W);
 
-                            var tmp: T = 0;
+            var tmp: T = 0;
 
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                const src = input[idx] & mask_;
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                const src = input[idx] & mask_;
 
-                                if (row == 0) {
-                                    tmp = src;
-                                } else {
-                                    tmp |= src << (row * W) % N_BITS;
-                                }
-
-                                const curr_word: usize = (row * W) / N_BITS;
-                                const next_word: usize = ((row + 1) * W) / N_BITS;
-
-                                if (next_word > curr_word) {
-                                    output[N_LANES * curr_word + lane] = tmp;
-                                    const remaining_bits: usize = ((row + 1) * W) % N_BITS;
-                                    tmp = src >> W - remaining_bits;
-                                }
-                            }
-                        }
-                    }
+                if (row == 0) {
+                    tmp = src;
+                } else {
+                    tmp |= src << (row * W) % N_BITS;
                 }
 
-                pub fn bit_unpack(
-                    comptime T: type,
-                    comptime W: comptime_int,
-                    noalias input: *align(1) const [packed_len(T, W)]T,
-                    noalias output: *[1024]T,
-                ) void {
-                    const N_BITS = @bitSizeOf(T);
-                    const N_LANES = n_lanes(T);
+                const curr_word: usize = (row * W) / N_BITS;
+                const next_word: usize = ((row + 1) * W) / N_BITS;
 
-                    for (0..N_LANES) |lane| {
-                        if (W == 0) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                output[idx] = 0;
-                            }
-                        } else if (W == N_BITS) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                const src = input[N_LANES * row + lane];
-                                output[idx] = src;
-                            }
-                        } else {
-                            var src: T = input[lane];
-                            var tmp: T = 0;
+                if (next_word > curr_word) {
+                    output[N_LANES * curr_word + lane] = tmp;
+                    const remaining_bits: usize = ((row + 1) * W) % N_BITS;
+                    tmp = src >> W - remaining_bits;
+                }
+            }
+        }
+    }
+}
 
-                            inline for (0..N_BITS) |row| {
-                                const curr_word: usize = (row * W) / N_BITS;
-                                const next_word: usize = ((row + 1) * W) / N_BITS;
+pub fn bit_unpack(
+    comptime T: type,
+    comptime W: comptime_int,
+    noalias input: *align(1) const [packed_len(T, W)]T,
+    noalias output: *[1024]T,
+) void {
+    const N_BITS = @bitSizeOf(T);
+    const N_LANES = n_lanes(T);
 
-                                const shift = (row * W) % N_BITS;
+    for (0..N_LANES) |lane| {
+        if (W == 0) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                output[idx] = 0;
+            }
+        } else if (W == N_BITS) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                const src = input[N_LANES * row + lane];
+                output[idx] = src;
+            }
+        } else {
+            var src: T = input[lane];
+            var tmp: T = 0;
 
-                                if (next_word > curr_word) {
-                                    const remaining_bits = ((row + 1) * W) % N_BITS;
-                                    const current_bits = W - remaining_bits;
-                                    tmp = (src >> shift) & mask(T, current_bits);
+            inline for (0..N_BITS) |row| {
+                const curr_word: usize = (row * W) / N_BITS;
+                const next_word: usize = ((row + 1) * W) / N_BITS;
 
-                                    if (next_word < W) {
-                                        src = input[N_LANES * next_word + lane];
-                                        tmp |= (src & mask(T, remaining_bits)) << current_bits;
-                                    }
-                                } else {
-                                    tmp = (src >> shift) & mask(T, W);
-                                }
+                const shift = (row * W) % N_BITS;
 
-                                const idx = index(row, lane);
-                                output[idx] = tmp;
-                            }
-                        }
+                if (next_word > curr_word) {
+                    const remaining_bits = ((row + 1) * W) % N_BITS;
+                    const current_bits = W - remaining_bits;
+                    tmp = (src >> shift) & mask(T, current_bits);
+
+                    if (next_word < W) {
+                        src = input[N_LANES * next_word + lane];
+                        tmp |= (src & mask(T, remaining_bits)) << current_bits;
                     }
+                } else {
+                    tmp = (src >> shift) & mask(T, W);
                 }
 
-                pub fn for_pack(
-                    comptime T: type,
-                    comptime W: comptime_int,
-                    noalias input: *const [1024]T,
-                    reference: T,
-                    noalias output: *align(1) [packed_len(T, W)]T,
-                ) void {
-                    const N_BITS = @bitSizeOf(T);
-                    const N_LANES = n_lanes(T);
+                const idx = index(row, lane);
+                output[idx] = tmp;
+            }
+        }
+    }
+}
 
-                    for (0..N_LANES) |lane| {
-                        if (W == 0) {
-                            return;
-                        } else if (W == N_BITS) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                output[N_LANES * row + lane] = input[idx] -% reference;
-                            }
-                            return;
-                        } else {
-                            const mask_ = mask(T, W);
+pub fn for_pack(
+    comptime T: type,
+    comptime W: comptime_int,
+    noalias input: *const [1024]T,
+    reference: T,
+    noalias output: *align(1) [packed_len(T, W)]T,
+) void {
+    const N_BITS = @bitSizeOf(T);
+    const N_LANES = n_lanes(T);
 
-                            var tmp: T = 0;
+    for (0..N_LANES) |lane| {
+        if (W == 0) {
+            return;
+        } else if (W == N_BITS) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                output[N_LANES * row + lane] = input[idx] -% reference;
+            }
+            return;
+        } else {
+            const mask_ = mask(T, W);
 
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                const src = (input[idx] -% reference) & mask_;
+            var tmp: T = 0;
 
-                                if (row == 0) {
-                                    tmp = src;
-                                } else {
-                                    tmp |= src << (row * W) % N_BITS;
-                                }
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                const src = (input[idx] -% reference) & mask_;
 
-                                const curr_word: usize = (row * W) / N_BITS;
-                                const next_word: usize = ((row + 1) * W) / N_BITS;
-
-                                if (next_word > curr_word) {
-                                    output[N_LANES * curr_word + lane] = tmp;
-                                    const remaining_bits: usize = ((row + 1) * W) % N_BITS;
-                                    tmp = src >> W - remaining_bits;
-                                }
-                            }
-                        }
-                    }
+                if (row == 0) {
+                    tmp = src;
+                } else {
+                    tmp |= src << (row * W) % N_BITS;
                 }
 
-                pub fn for_unpack(
-                    comptime T: type,
-                    comptime W: comptime_int,
-                    noalias input: *align(1) const [packed_len(T, W)]T,
-                    reference: T,
-                    noalias output: *[1024]T,
-                ) void {
-                    const N_BITS = @bitSizeOf(T);
-                    const N_LANES = n_lanes(T);
+                const curr_word: usize = (row * W) / N_BITS;
+                const next_word: usize = ((row + 1) * W) / N_BITS;
 
-                    for (0..N_LANES) |lane| {
-                        if (W == 0) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                output[idx] = reference;
-                            }
-                        } else if (W == N_BITS) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                const src = input[N_LANES * row + lane];
-                                output[idx] = src +% reference;
-                            }
-                        } else {
-                            var src: T = input[lane];
-                            var tmp: T = 0;
+                if (next_word > curr_word) {
+                    output[N_LANES * curr_word + lane] = tmp;
+                    const remaining_bits: usize = ((row + 1) * W) % N_BITS;
+                    tmp = src >> W - remaining_bits;
+                }
+            }
+        }
+    }
+}
 
-                            inline for (0..N_BITS) |row| {
-                                const curr_word: usize = (row * W) / N_BITS;
-                                const next_word: usize = ((row + 1) * W) / N_BITS;
+pub fn for_unpack(
+    comptime T: type,
+    comptime W: comptime_int,
+    noalias input: *align(1) const [packed_len(T, W)]T,
+    reference: T,
+    noalias output: *[1024]T,
+) void {
+    const N_BITS = @bitSizeOf(T);
+    const N_LANES = n_lanes(T);
 
-                                const shift = (row * W) % N_BITS;
+    for (0..N_LANES) |lane| {
+        if (W == 0) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                output[idx] = reference;
+            }
+        } else if (W == N_BITS) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                const src = input[N_LANES * row + lane];
+                output[idx] = src +% reference;
+            }
+        } else {
+            var src: T = input[lane];
+            var tmp: T = 0;
 
-                                if (next_word > curr_word) {
-                                    const remaining_bits = ((row + 1) * W) % N_BITS;
-                                    const current_bits = W - remaining_bits;
-                                    tmp = (src >> shift) & mask(T, current_bits);
+            inline for (0..N_BITS) |row| {
+                const curr_word: usize = (row * W) / N_BITS;
+                const next_word: usize = ((row + 1) * W) / N_BITS;
 
-                                    if (next_word < W) {
-                                        src = input[N_LANES * next_word + lane];
-                                        tmp |= (src & mask(T, remaining_bits)) << current_bits;
-                                    }
-                                } else {
-                                    tmp = (src >> shift) & mask(T, W);
-                                }
+                const shift = (row * W) % N_BITS;
 
-                                const idx = index(row, lane);
-                                output[idx] = tmp +% reference;
-                            }
-                        }
+                if (next_word > curr_word) {
+                    const remaining_bits = ((row + 1) * W) % N_BITS;
+                    const current_bits = W - remaining_bits;
+                    tmp = (src >> shift) & mask(T, current_bits);
+
+                    if (next_word < W) {
+                        src = input[N_LANES * next_word + lane];
+                        tmp |= (src & mask(T, remaining_bits)) << current_bits;
                     }
+                } else {
+                    tmp = (src >> shift) & mask(T, W);
                 }
 
-                pub fn undelta_pack(
-                    comptime T: type,
-                    comptime W: comptime_int,
-                    noalias input: *align(1) const [packed_len(T, W)]T,
-                    noalias base: *align(1) const [n_lanes(T)]T,
-                    noalias output: *[1024]T,
-                ) void {
-                    const N_BITS = @bitSizeOf(T);
-                    const N_LANES = n_lanes(T);
-                    for (0..N_LANES) |lane| {
-                        var prev: T = base[lane];
+                const idx = index(row, lane);
+                output[idx] = tmp +% reference;
+            }
+        }
+    }
+}
 
-                        if (W == 0) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                output[idx] = prev;
-                            }
-                        } else if (W == N_BITS) {
-                            inline for (0..N_BITS) |row| {
-                                const idx = index(row, lane);
-                                const src = input[N_LANES * row + lane];
+pub fn undelta_pack(
+    comptime T: type,
+    comptime W: comptime_int,
+    noalias input: *align(1) const [packed_len(T, W)]T,
+    noalias base: *align(1) const [n_lanes(T)]T,
+    noalias output: *[1024]T,
+) void {
+    const N_BITS = @bitSizeOf(T);
+    const N_LANES = n_lanes(T);
+    for (0..N_LANES) |lane| {
+        var prev: T = base[lane];
 
-                                const next = src +% prev;
-                                output[idx] = next;
-                                prev = next;
-                            }
-                        } else {
-                            var src: T = input[lane];
-                            var tmp: T = 0;
+        if (W == 0) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                output[idx] = prev;
+            }
+        } else if (W == N_BITS) {
+            inline for (0..N_BITS) |row| {
+                const idx = index(row, lane);
+                const src = input[N_LANES * row + lane];
 
-                            inline for (0..N_BITS) |row| {
-                                const curr_word: usize = (row * W) / N_BITS;
-                                const next_word: usize = ((row + 1) * W) / N_BITS;
+                const next = src +% prev;
+                output[idx] = next;
+                prev = next;
+            }
+        } else {
+            var src: T = input[lane];
+            var tmp: T = 0;
 
-                                const shift = (row * W) % N_BITS;
+            inline for (0..N_BITS) |row| {
+                const curr_word: usize = (row * W) / N_BITS;
+                const next_word: usize = ((row + 1) * W) / N_BITS;
 
-                                if (next_word > curr_word) {
-                                    const remaining_bits = ((row + 1) * W) % N_BITS;
-                                    const current_bits = W - remaining_bits;
-                                    tmp = (src >> shift) & mask(T, current_bits);
+                const shift = (row * W) % N_BITS;
 
-                                    if (next_word < W) {
-                                        src = input[N_LANES * next_word + lane];
-                                        tmp |= (src & mask(T, remaining_bits)) << current_bits;
-                                    }
-                                } else {
-                                    tmp = (src >> shift) & mask(T, W);
-                                }
+                if (next_word > curr_word) {
+                    const remaining_bits = ((row + 1) * W) % N_BITS;
+                    const current_bits = W - remaining_bits;
+                    tmp = (src >> shift) & mask(T, current_bits);
 
-                                const idx = index(row, lane);
-
-                                const next = tmp +% prev;
-                                output[idx] = next;
-                                prev = next;
-                            }
-                        }
+                    if (next_word < W) {
+                        src = input[N_LANES * next_word + lane];
+                        tmp |= (src & mask(T, remaining_bits)) << current_bits;
                     }
+                } else {
+                    tmp = (src >> shift) & mask(T, W);
                 }
+
+                const idx = index(row, lane);
+
+                const next = tmp +% prev;
+                output[idx] = next;
+                prev = next;
+            }
+        }
+    }
+}
 
 // fn Test(comptime T: type) type {
 //     return struct {
