@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const FastLanes = @import("./fastlanes.zig").FastLanes;
+const fastlanes = @import("./fastlanes.zig");
 const ZigZag = @import("./zigzag.zig").ZigZag;
 const ScalarBitpack = @import("./scalar_bitpack.zig").ScalarBitpack;
 
@@ -1175,7 +1175,6 @@ fn Impl(comptime T: type) type {
 
     const IS_SIGNED = T != U;
 
-    const FL = FastLanes(U);
     const SPack = ScalarBitpack(U);
 
     const N_BYTES = @sizeOf(U);
@@ -1268,12 +1267,12 @@ fn Impl(comptime T: type) type {
             for (0..n_whole_blocks) |block_idx| {
                 const block = load_block(&input_blocks[block_idx], scratch);
 
-                const max = max1024(block);
+                const max = std.mem.max(U, block);
                 const width = needed_width(max);
 
                 output[1 + block_idx] = width;
 
-                offset += FL.dyn_bit_pack(block, out[offset..], width);
+                offset += fastlanes.dyn_bit_pack(U, block, out[offset..], width);
             }
 
             return byte_offset + N_BYTES * offset;
@@ -1360,15 +1359,17 @@ fn Impl(comptime T: type) type {
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 if (IS_SIGNED) {
                     const zigzagged: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_bit_unpack(
+                    offset += fastlanes.dyn_bit_unpack(
+                        U,
                         data_section[offset..],
                         zigzagged,
                         width,
                     );
-                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
+                    ZigZag(T).decode(zigzagged, out_offset[0..1024]);
                 } else {
                     const scratch_u: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_bit_unpack(
+                    offset += fastlanes.dyn_bit_unpack(
+                        U,
                         data_section[offset..],
                         scratch_u,
                         width,
@@ -1490,7 +1491,7 @@ fn Impl(comptime T: type) type {
             for (0..n_whole_blocks) |block_idx| {
                 const block = load_block(&input_blocks[block_idx], scratch);
 
-                const min, const max = minmax1024(block);
+                const min, const max = std.mem.minMax(U, block);
                 const width = needed_width(max - min);
 
                 output[1 + block_idx] = width;
@@ -1498,7 +1499,7 @@ fn Impl(comptime T: type) type {
                 out[offset] = min;
                 offset += 1;
 
-                offset += FL.dyn_for_pack(block, min, out[offset..], width);
+                offset += fastlanes.dyn_for_pack(U, block, min, out[offset..], width);
             }
 
             return byte_offset + N_BYTES * offset;
@@ -1594,16 +1595,18 @@ fn Impl(comptime T: type) type {
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 if (IS_SIGNED) {
                     const zigzagged: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_for_unpack(
+                    offset += fastlanes.dyn_for_unpack(
+                        U,
                         data_section[offset..],
                         ref,
                         zigzagged,
                         width,
                     );
-                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
+                    ZigZag(T).decode(zigzagged, out_offset[0..1024]);
                 } else {
                     const scratch_u: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_for_unpack(
+                    offset += fastlanes.dyn_for_unpack(
+                        U,
                         data_section[offset..],
                         ref,
                         scratch_u,
@@ -1627,7 +1630,7 @@ fn Impl(comptime T: type) type {
             const n_blocks = len / 1024;
             const n_remainder = len % 1024;
 
-            const max_block_size = N_BYTES * (FL.N_LANES + 1024);
+            const max_block_size = N_BYTES * (fastlanes.n_lanes(U) + 1024);
 
             // Layout of the output is:
             // - remainder values bit_width(u8)
@@ -1669,7 +1672,7 @@ fn Impl(comptime T: type) type {
             const byte_offset = 1 + n_whole_blocks;
 
             // We should have this much capacity even though we will write less
-            const out_t_len = (FL.N_LANES + 1024) * n_whole_blocks + 1 + n_remainder;
+            const out_t_len = (fastlanes.n_lanes(U) + 1024) * n_whole_blocks + 1 + n_remainder;
 
             const out: []align(1) U = @ptrCast(output[byte_offset .. byte_offset + out_t_len * N_BYTES]);
             std.debug.assert(out.len == out_t_len);
@@ -1728,23 +1731,23 @@ fn Impl(comptime T: type) type {
                 const transposed_buf: *[1024]U = @ptrCast(transposed);
                 const delta_buf: *[1024]U = @ptrCast(delta);
 
-                FL.transpose(block, transposed_buf);
+                fastlanes.transpose(U, block, transposed_buf);
 
-                const bases: *const [FL.N_LANES]U = transposed_buf[0..FL.N_LANES];
+                const bases: *const [fastlanes.n_lanes(U)]U = transposed_buf[0..fastlanes.n_lanes(U)];
 
-                FL.delta(transposed_buf, bases, delta_buf);
+                fastlanes.delta(U, transposed_buf, bases, delta_buf);
 
-                const max = max1024(delta_buf);
+                const max = std.mem.max(U, delta_buf);
                 const width = needed_width(max);
 
                 output[1 + block_idx] = width;
 
-                for (0..FL.N_LANES) |i| {
+                for (0..fastlanes.n_lanes(U)) |i| {
                     out[offset + i] = bases[i];
                 }
-                offset += FL.N_LANES;
+                offset += fastlanes.n_lanes(U);
 
-                offset += FL.dyn_bit_pack(delta_buf, out[offset..], width);
+                offset += fastlanes.dyn_bit_pack(U, delta_buf, out[offset..], width);
             }
 
             return byte_offset + N_BYTES * offset;
@@ -1784,7 +1787,7 @@ fn Impl(comptime T: type) type {
                 }
             }
             for (block_widths) |w| {
-                total_packed_len += @as(u64, w) * 1024 / N_BITS + FL.N_LANES;
+                total_packed_len += @as(u64, w) * 1024 / N_BITS + fastlanes.n_lanes(U);
             }
 
             const data_section_byte_offset = 1 + n_whole_blocks;
@@ -1835,21 +1838,21 @@ fn Impl(comptime T: type) type {
                 const width = block_widths[block_idx];
 
                 const bases_p = data_section[offset..];
-                const bases: *align(1) const [FL.N_LANES]U = bases_p[0..FL.N_LANES];
-                offset += FL.N_LANES;
+                const bases: *align(1) const [fastlanes.n_lanes(U)]U = bases_p[0..fastlanes.n_lanes(U)];
+                offset += fastlanes.n_lanes(U);
 
                 const transposed_buf: *[1024]U = @ptrCast(transposed);
 
                 const out_offset = output[block_idx * 1024 + n_remainder ..];
                 if (IS_SIGNED) {
                     const zigzagged: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
-                    FL.untranspose(transposed_buf, zigzagged);
-                    ZigZag(T).decode1024(zigzagged, out_offset[0..1024]);
+                    offset += fastlanes.dyn_undelta_pack(U, data_section[offset..], bases, transposed_buf, width);
+                    fastlanes.untranspose(U, transposed_buf, zigzagged);
+                    ZigZag(T).decode(zigzagged, out_offset[0..1024]);
                 } else {
                     const scratch_u: *[1024]U = @ptrCast(scratch);
-                    offset += FL.dyn_undelta_pack(data_section[offset..], bases, transposed_buf, width);
-                    FL.untranspose(transposed_buf, scratch_u);
+                    offset += fastlanes.dyn_undelta_pack(U, data_section[offset..], bases, transposed_buf, width);
+                    fastlanes.untranspose(U, transposed_buf, scratch_u);
                     // out_offset[0..1024].* = scratch_u.*;
                     copy_scratch(scratch_u, out_offset);
                 }
@@ -1859,26 +1862,6 @@ fn Impl(comptime T: type) type {
             std.debug.assert(offset == data_section.len);
 
             return data_section_byte_offset + @sizeOf(T) * offset;
-        }
-
-        fn max1024(input: *const [1024]U) U {
-            var m = input[0];
-            for (0..1024) |i| {
-                m = @max(input[i], m);
-            }
-            return m;
-        }
-
-        fn minmax1024(input: *const [1024]U) struct { U, U } {
-            var min = input[0];
-            var max = input[0];
-
-            for (0..1024) |i| {
-                min = @min(input[i], min);
-                max = @max(input[i], max);
-            }
-
-            return .{ min, max };
         }
 
         fn needed_width(range: U) u7 {
@@ -1903,7 +1886,7 @@ fn Impl(comptime T: type) type {
         fn load_block(noalias input: *const [1024]T, noalias scratch: *[1024]T) *const [1024]U {
             if (IS_SIGNED) {
                 const zigzagged: *[1024]U = @ptrCast(scratch);
-                ZigZag(T).encode1024(input, zigzagged);
+                ZigZag(T).encode(input, zigzagged);
                 return zigzagged;
             } else {
                 return @ptrCast(input);
@@ -1915,7 +1898,7 @@ fn Impl(comptime T: type) type {
         fn load_block_copy(noalias input: *const [1024]T, noalias scratch: *[1024]T) *const [1024]U {
             if (IS_SIGNED) {
                 const zigzagged: *[1024]U = @ptrCast(scratch);
-                ZigZag(T).encode1024(input, zigzagged);
+                ZigZag(T).encode(input, zigzagged);
                 return zigzagged;
             } else {
                 copy_scratch(@ptrCast(input), @ptrCast(scratch));

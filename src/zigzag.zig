@@ -32,26 +32,6 @@ pub fn ZigZag(comptime T: type) type {
                 o.* = @bitCast((v >> 1) ^ negate(v & 1));
             }
         }
-
-        pub fn encode1024(
-            noalias input: *const [1024]T,
-            noalias output: *[1024]U,
-        ) void {
-            for (0..1024) |i| {
-                const v = input[i];
-                output[i] = @bitCast((v >> (N_BITS - 1)) ^ (v << 1));
-            }
-        }
-
-        pub fn decode1024(
-            noalias input: *const [1024]U,
-            noalias output: *[1024]T,
-        ) void {
-            for (0..1024) |i| {
-                const v = input[i];
-                output[i] = @bitCast((v >> 1) ^ negate(v & 1));
-            }
-        }
     };
 }
 

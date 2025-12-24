@@ -18,10 +18,10 @@ const TYPES = .{
     i32,
     i64,
     u64,
-    u128,
-    i128,
-    u256,
-    i256,
+    // u128,
+    // i128,
+    // u256,
+    // i256,
 };
 
 const LENGTHS: []const u32 = &.{
